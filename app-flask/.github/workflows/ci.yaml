@@ -1,0 +1,75 @@
+name: CI - Build, Scan, Push, Bump Tag
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  build-test-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps & test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pytest -q
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v2
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          IMAGE=${{ secrets.CONTAINER_REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          docker build -t "$IMAGE" .
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Trivy Image Scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+      - name: Login to registry
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.CONTAINER_REGISTRY }} -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Push image
+        run: |
+          docker push "${{ env.IMAGE }}"
+
+      - name: Bump image tag in manifests repo (kustomization images)
+        env:
+          MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}     # e.g. your-org/manifests
+          TOKEN: ${{ secrets.MANIFESTS_REPO_PAT }}
+          KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}     # e.g. overlays/dev
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+          git clone https://x-access-token:${TOKEN}@github.com/${MANIFESTS_REPO}.git manifests-tmp
+          cd manifests-tmp
+          # Install yq to edit YAML
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
+          IMG="${{ env.IMAGE }}"
+          # Update images section in kustomization.yaml
+          yq -i '.images[0].newName = strenv(IMG) | .images[0].name = "app-image" | .images[0].newTag = ""' ${KUSTOMIZE_PATH}/kustomization.yaml
+          git add ${KUSTOMIZE_PATH}/kustomization.yaml
+          git commit -m "chore: bump image to ${IMG}"
+          git push origin HEAD:main
