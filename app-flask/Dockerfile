@@ -10,8 +10,16 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .
-RUN pip install --no-index --find-links=/wheels -r requirements.txt &&     adduser --disabled-password --gecos "" appuser
-COPY app ./app
+RUN pip install --no-index --find-links=/wheels -r requirements.txt \
+    && adduser --disabled-password --gecos "" appuser
+
+# Copy app code
+COPY src/ .
+
 USER appuser
-EXPOSE 3000
-CMD ["python", "-m", "app.main"]
+
+# Flask app runs on port 5000
+EXPOSE 5000
+
+# Run Flask app
+CMD ["python", "app.py"]
