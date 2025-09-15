@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  # Default role for any user not explicitly mapped
+  policy.default: role:readonly
+
+  policy.csv: |
+    # --- DEV ROLE ---
+    # Developers can view and deploy (sync) apps only in "default" namespace
+    p, role:dev, applications, get, default/*, allow
+    p, role:dev, applications, sync, default/*, allow
+
+    # --- QA ROLE ---
+    # QA can view apps in all namespaces but cannot sync/deploy
+    p, role:qa, applications, get, */*, allow
+
+    # --- ADMIN ROLE ---
+    # Admins can do everything in all namespaces
+    p, role:admin, *, *, */*, allow
+
+    # --- USER → ROLE MAPPINGS ---
+    g, dev-user, role:dev
+    g, qa-user, role:qa
+    g, super-admin, role:admin

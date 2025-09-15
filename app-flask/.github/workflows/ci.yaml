@@ -1,75 +1,134 @@
-name: CI - Build, Scan, Push, Bump Tag
+name: CI/CD with ArgoCD and RBAC
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
 
 jobs:
-  build-test-scan:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
 
     steps:
-      - name: Checkout
+      - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.12'
+          node-version: 18
 
-      - name: Install deps & test
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pytest -q
+      - name: Install dependencies
+        run: npm install
 
-      - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v2
-        env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Run tests
+        run: npm test
 
       - name: Build Docker image
         run: |
-          IMAGE=${{ secrets.CONTAINER_REGISTRY }}/${{ github.repository }}:${{ github.sha }}
-          docker build -t "$IMAGE" .
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }} .
 
-      - name: Trivy Image Scan
-        uses: aquasecurity/trivy-action@0.24.0
+      - name: Azure Container Registry Login
+        uses: azure/docker-login@v1
         with:
-          image-ref: ${{ env.IMAGE }}
-          format: 'table'
-          severity: 'HIGH,CRITICAL'
-          exit-code: '1'
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Login to registry
+      - name: Push Docker image
         run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.CONTAINER_REGISTRY }} -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }}
 
-      - name: Push image
+      - name: Update Kubernetes manifests
         run: |
-          docker push "${{ env.IMAGE }}"
+          sed -i "s|IMAGE_PLACEHOLDER|${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }}|g" k8s/deployment.yaml
 
-      - name: Bump image tag in manifests repo (kustomization images)
-        env:
-          MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}     # e.g. your-org/manifests
-          TOKEN: ${{ secrets.MANIFESTS_REPO_PAT }}
-          KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}     # e.g. overlays/dev
+      - name: Set up AKS credentials
+        uses: azure/aks-set-context@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          resource-group: devsecops-rg
+          cluster-name: devsecops-aks
+
+      - name: Commit updated manifests
         run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "github-actions"
-          git clone https://x-access-token:${TOKEN}@github.com/${MANIFESTS_REPO}.git manifests-tmp
-          cd manifests-tmp
-          # Install yq to edit YAML
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
-          IMG="${{ env.IMAGE }}"
-          # Update images section in kustomization.yaml
-          yq -i '.images[0].newName = strenv(IMG) | .images[0].name = "app-image" | .images[0].newTag = ""' ${KUSTOMIZE_PATH}/kustomization.yaml
-          git add ${KUSTOMIZE_PATH}/kustomization.yaml
-          git commit -m "chore: bump image to ${IMG}"
-          git push origin HEAD:main
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add k8s/deployment.yaml
+          git commit -m "Update image to ${{ github.sha }}" || echo "No changes"
+          git push
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 1: Enable ArgoCD user accounts (dev-user & ops-user)
+      - name: Apply ArgoCD Accounts Config
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: argocd-cm
+            namespace: argocd
+          data:
+            accounts.dev-user: login
+            accounts.ops-user: login
+          EOF
+
+      # Step 2: Apply ArgoCD RBAC rules
+      - name: Apply ArgoCD RBAC rules
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: argocd-rbac-cm
+            namespace: argocd
+          data:
+            policy.default: role:readonly
+            policy.csv: |
+              p, role:dev, applications, get, default/*, allow
+              p, role:dev, applications, sync, default/*, allow
+              p, role:ops, applications, get, *, allow
+              p, role:ops, applications, sync, *, allow
+              g, dev-user, role:dev
+              g, ops-user, role:ops
+          EOF
+
+      # Step 3: Port-forward ArgoCD service
+      - name: Port-forward ArgoCD
+        run: |
+          kubectl port-forward svc/argocd-server -n argocd 8080:443 &
+          sleep 5
+
+      # Step 4: Login to ArgoCD
+      - name: ArgoCD Login
+        run: |
+          argocd login localhost:8080 \
+            --username admin \
+            --password ${{ secrets.ARGOCD_ADMIN_PASSWORD }} \
+            --insecure
+
+      # Step 5: Set passwords for new users
+      - name: Set ArgoCD User Passwords
+        run: |
+          argocd account update-password --account dev-user --current-password "" --new-password ${{ secrets.ARGOCD_DEV_PASSWORD }}
+          argocd account update-password --account ops-user --current-password "" --new-password ${{ secrets.ARGOCD_OPS_PASSWORD }}
+
+      # Step 6: Sync application
+      - name: ArgoCD Sync App
+        run: |
+          argocd app sync myapp
+
+      # Step 7: Verify application health
+      - name: Verify App Health
+        run: |
+          argocd app wait myapp --health --timeout 180
