@@ -1,0 +1,84 @@
+name: Terraform CI/CD
+
+on:
+  push:
+    branches: [ \"main\", \"prod\" ] # Trigger apply on pushes to main or prod
+    paths:
+      - 'terraform/**' # Only run if changes are in the terraform directory
+  pull_request:
+    branches: [ \"main\", \"prod\" ] # Trigger plan on PRs to main or prod
+    paths:
+      - 'terraform/**' # Only run if changes are in the terraform directory
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      # Example: Set environment variables for Azure authentication
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # Set other variables required by your configuration (e.g., location, prefix)
+      TF_VAR_location: \"East US\" # Using TF_VAR_ prefix for environment variables
+
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        # Use a specific version of Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.x # Specify the version range
+
+
+      - name: Terraform Init
+        id: init
+        # Change directory if your .tf files are not at the repo root
+        run: terraform init
+        working-directory: ./terraform # Example: if .tf files are in a \'terraform\' subdirectory
+
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+        working-directory: ./terraform
+
+
+      - name: Terraform Plan
+        id: plan
+        # Generate a plan file and capture the output for PRs
+        run: terraform plan -no-color -out=tfplan
+        working-directory: ./terraform
+        # Only run plan if the workflow was triggered by a pull request
+        if: github.event_name == 'pull_request'
+
+
+      - name: Update PR with Plan Output
+        # Use a community action to comment the plan on the PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require(\'fs\');\n
+            const plan = fs.readFileSync(\'terraform/tfplan\', \'utf8\');\n
+            github.rest.issues.createComment({\n
+              issue_number: context.issue.number,\n
+              owner: context.repo.owner,\n
+              repo: context.repo.repo,\n
+              body: \'```terraform\n\' + plan + \'\n```\'\n
+            });\n
+          github-token: ${{ secrets.GITHUB_TOKEN }} # GITHUB_TOKEN is automatically provided
+
+
+      - name: Terraform Apply
+        id: apply
+        # Apply the plan generated in the plan step (or a new plan if no plan file)
+        run: terraform apply -auto-approve tfplan
+        working-directory: ./terraform
+        # Only run apply on pushes to specified branches (e.g., main or prod)
+        # You might add conditions to target different environments based on the branch
+        if: github.event_name == \'push\' && (github.ref == \'refs/heads/main\' || github.ref == \'refs/heads/prod\')

@@ -1,16 +1,17 @@
-name: CI/CD with ArgoCD, RBAC, Linting & Tests
+name: CI/CD with ArgoCD, RBAC, Scanning, Linting & Monitoring
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
   pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
-  build:
+  build-test-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout source code
@@ -24,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install Python deps
         run: |
           pip install flake8 pytest
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -45,61 +46,75 @@ jobs:
         with:
           node-version: 18
 
-      - name: Install dependencies
+      - name: Install Node.js deps
         run: npm install
 
-      - name: Run tests
+      - name: Run frontend tests
         run: npm test
 
       # ---------------------------
-      # Docker build & push
+      # SonarQube Scan
+      # ---------------------------
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v2
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # ---------------------------
+      # Docker build & scan
       # ---------------------------
       - name: Build Docker image
         run: |
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }} .
+          IMAGE=${{ secrets.CONTAINER_REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          docker build -t "$IMAGE" .
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Azure Container Registry Login
-        uses: azure/docker-login@v1
+      - name: Trivy Image Scan
+        uses: aquasecurity/trivy-action@0.24.0
         with:
-          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+          image-ref: ${{ env.IMAGE }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
 
-      - name: Push Docker image
+      - name: Login to registry
         run: |
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }}
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.CONTAINER_REGISTRY }} -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Push image
+        run: docker push "${{ env.IMAGE }}"
 
       # ---------------------------
-      # Update manifests in repo
+      # Update manifests repo
       # ---------------------------
-      - name: Update Kubernetes manifests
+      - name: Bump image tag in manifests repo (kustomization images)
+        env:
+          MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}
+          TOKEN: ${{ secrets.MANIFESTS_REPO_PAT }}
+          KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
         run: |
-          sed -i "s|IMAGE_PLACEHOLDER|${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }}|g" k8s/deployment.yaml
-
-      - name: Set up AKS credentials
-        uses: azure/aks-set-context@v3
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-          resource-group: devsecops-rg
-          cluster-name: devsecops-aks
-
-      - name: Commit updated manifests
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add k8s/deployment.yaml
-          git commit -m "Update image to ${{ github.sha }}" || echo "No changes"
-          git push
+          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+          git clone https://x-access-token:${TOKEN}@github.com/${MANIFESTS_REPO}.git manifests-tmp
+          cd manifests-tmp
+          # Install yq
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
+          IMG="${{ env.IMAGE }}"
+          yq -i '.images[0].newName = strenv(IMG) | .images[0].name = "app-image" | .images[0].newTag = ""' ${KUSTOMIZE_PATH}/kustomization.yaml
+          git add ${KUSTOMIZE_PATH}/kustomization.yaml
+          git commit -m "chore: bump image to ${IMG}" || echo "No changes"
+          git push origin HEAD:main
 
   deploy:
-    needs: build
+    needs: build-test-scan
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 1: Enable ArgoCD user accounts (dev-user & ops-user)
+      # Step 1: Enable ArgoCD user accounts
       - name: Apply ArgoCD Accounts Config
         run: |
           cat <<EOF | kubectl apply -f -
@@ -155,10 +170,15 @@ jobs:
 
       # Step 6: Sync application
       - name: ArgoCD Sync App
-        run: |
-          argocd app sync myapp
+        run: argocd app sync myapp
 
       # Step 7: Verify application health
       - name: Verify App Health
+        run: argocd app wait myapp --health --timeout 180
+
+      # Step 8: Deploy Monitoring Stack (Prometheus, Grafana, Loki)
+      - name: Deploy Monitoring Stack
         run: |
-          argocd app wait myapp --health --timeout 180
+          kubectl apply -f k8s/monitoring/prometheus.yaml
+          kubectl apply -f k8s/monitoring/grafana.yaml
+          kubectl apply -f k8s/monitoring/loki.yaml

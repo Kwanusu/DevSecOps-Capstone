@@ -49,3 +49,4 @@ EXPOSE 8000
 # Run with Gunicorn for production
 # src.app:app → path.to.file:Flask_instance
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "src.app:app", "--workers=4", "--threads=2", "--timeout=60"]
+
