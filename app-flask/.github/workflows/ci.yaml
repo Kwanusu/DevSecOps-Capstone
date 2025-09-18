@@ -1,4 +1,4 @@
-name: CI/CD with ArgoCD and RBAC
+name: CI/CD with ArgoCD, RBAC, Linting & Tests
 
 on:
   push:
@@ -16,6 +16,30 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      # ---------------------------
+      # Python linting & testing (Flask app)
+      # ---------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install flake8 pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run flake8 linting
+        run: |
+          flake8 app/ \
+            --count --max-complexity=10 --max-line-length=120 --statistics
+
+      - name: Run pytest
+        run: pytest -q --disable-warnings --maxfail=1
+
+      # ---------------------------
+      # Node.js steps (frontend, if any)
+      # ---------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -27,6 +51,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # ---------------------------
+      # Docker build & push
+      # ---------------------------
       - name: Build Docker image
         run: |
           docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }} .
@@ -42,6 +69,9 @@ jobs:
         run: |
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }}
 
+      # ---------------------------
+      # Update manifests in repo
+      # ---------------------------
       - name: Update Kubernetes manifests
         run: |
           sed -i "s|IMAGE_PLACEHOLDER|${{ secrets.ACR_LOGIN_SERVER }}/myapp:${{ github.sha }}|g" k8s/deployment.yaml
