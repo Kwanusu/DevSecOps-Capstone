@@ -12,6 +12,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      security-events: write   # needed for CodeQL
 
     steps:
       - name: Checkout source code
@@ -53,6 +54,39 @@ jobs:
         run: npm test
 
       # ---------------------------
+      # Security Scans (NEW)
+      # ---------------------------
+
+      # Static code analysis (SAST) with CodeQL
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      # Python dependency scanning
+      - name: Python Dependency Scan
+        uses: pyupio/safety-action@v1
+        with:
+          args: check --full-report
+
+      # Node.js dependency scanning
+      - name: Node.js Audit
+        run: npm audit --audit-level=high || true
+
+      # IaC scanning for Kubernetes/Terraform/Helm
+      - name: IaC Scan with Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ./k8s
+
+      # Secret scanning
+      - name: Secret Scan with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+
+      # ---------------------------
       # SonarQube Scan
       # ---------------------------
       - name: SonarQube Scan
@@ -86,7 +120,7 @@ jobs:
         run: docker push "${{ env.IMAGE }}"
 
       # ---------------------------
-      # Update manifests repo
+      # Update manifests repo (GitOps style)
       # ---------------------------
       - name: Bump image tag in manifests repo (kustomization images)
         env:
