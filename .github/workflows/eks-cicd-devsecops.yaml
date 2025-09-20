@@ -74,13 +74,37 @@ jobs:
       matrix:
         service: [backend, frontend]
     outputs:
-      backend-image: ${{ steps.set-image.outputs.backend_image || '' }}
-      frontend-image: ${{ steps.set-image.outputs.frontend_image || '' }}
+      backend-image: ${{ steps.set-image.outputs.backend_image }}
+      frontend-image: ${{ steps.set-image.outputs.frontend_image }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      
+      - name: Setup service paths & image names
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            SERVICE_PATH=backend/app-flask
+            IMAGE_NAME="${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}"
+          else
+            SERVICE_PATH=frontend
+            IMAGE_NAME="${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}"
+          fi
+
+          # Strip any newlines
+          IMAGE_NAME=$(echo "$IMAGE_NAME" | tr -d '\n')
+
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+      - name: Lint & Test (Backend)
+        if: matrix.service == 'backend'
+        run: |
+          pip install flake8 pytest safety
+          pip install -r backend/app-flask/requirements.txt
+          flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
+          pytest backend/app-flask/ -q --disable-warnings --maxfail=1
+          safety check --full-report
+
       - name: Lint & Test (Frontend)
         if: matrix.service == 'frontend'
         run: |
@@ -102,10 +126,20 @@ jobs:
           exit-code: '1'
 
       - name: Login to ECR
-        run: aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - name: Push image to ECR
         run: docker push "$IMAGE_NAME"
+
+      - name: Set image outputs
+        id: set-image
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
