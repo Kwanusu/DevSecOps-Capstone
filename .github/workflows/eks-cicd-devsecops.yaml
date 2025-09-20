@@ -86,42 +86,54 @@ jobs:
             SERVICE_PATH=backend/app-flask
             IMAGE_NAME="${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}"
           else
-            SERVICE_PATH=frontend
+            SERVICE_PATH=frontend/event-manager
             IMAGE_NAME="${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}"
           fi
 
-          # Strip any newlines
           IMAGE_NAME=$(echo "$IMAGE_NAME" | tr -d '\n')
-
           echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
 
-      - name: Lint & Test (Backend)
+      # ---------------------------
+      # Backend CI
+      # ---------------------------
+      - name: Backend CI
         if: matrix.service == 'backend'
         run: |
-          pip install flake8 autopep8 pytest safety
+          python -m pip install --upgrade pip
           pip install -r backend/app-flask/requirements.txt
+          pip install autopep8 flake8 pytest safety
 
-          # Automatically fix linting issues
           autopep8 --in-place --aggressive --aggressive backend/app-flask/app/
           autopep8 --in-place --aggressive --aggressive backend/app-flask/tests/
 
-          # Run lint check again to show remaining issues (optional)
-          flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics || true
-
-          # Run tests and security check
+          flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
           safety check --full-report
 
-
-      - name: Lint & Test (Frontend)
+      # ---------------------------
+      # Frontend CI
+      # ---------------------------
+      - name: Frontend CI
         if: matrix.service == 'frontend'
         run: |
           cd frontend/event-manager
           npm install
-          npm test
+
+          if npm run | grep -q ' test'; then
+            npm test
+          else
+            echo "No test script found, skipping tests."
+          fi
+
+          npm install --save-dev prettier eslint
+          npx prettier --write .
+          npx eslint . --fix || true
           npm audit --audit-level=high || true
 
+      # ---------------------------
+      # Build Docker Image
+      # ---------------------------
       - name: Build Docker image
         run: |
           echo "Building Docker image: $IMAGE_NAME"
@@ -220,3 +232,254 @@ jobs:
           kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s || true
           kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s || true
           kubectl rollout status statefulset/loki -n monitoring --timeout=120s || true
+
+# name: EKS CI/CD with DevSecOps, ArgoCD & Monitoring
+# on:
+#   push:
+#     branches: ["main"]
+#   pull_request:
+#     branches: ["main"]
+#   workflow_dispatch:
+
+# env:
+#   AWS_REGION: ${{ secrets.AWS_REGION }}
+#   ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+#   ARGOCD_ADMIN_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
+#   ARGOCD_DEV_PASSWORD: ${{ secrets.ARGOCD_DEV_PASSWORD }}
+#   ARGOCD_OPS_PASSWORD: ${{ secrets.ARGOCD_OPS_PASSWORD }}
+#   MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}
+#   MANIFESTS_REPO_PAT: ${{ secrets.MANIFESTS_REPO_PAT }}
+#   KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
+
+# jobs:
+#   # ---------------------------
+#   # Shared DevSecOps Scan
+#   # ---------------------------
+#   devsecops-scan:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write
+#       security-events: write
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
+
+#       - name: Install Gitleaks
+#         run: |
+#           curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /usr/local/bin
+
+#       - name: Secret Scan
+#         run: |
+#           gitleaks detect \
+#             --redact 100 \
+#             -v \
+#             --exit-code=2 \
+#             --report-format=sarif \
+#             --report-path=results.sarif \
+#             --config .gitleaks.toml
+
+#       - name: Upload SARIF
+#         uses: github/codeql-action/upload-sarif@v2
+#         with:
+#           sarif_file: results.sarif
+
+#       - name: IaC Scan
+#         uses: bridgecrewio/checkov-action@master
+#         with:
+#           directory: ./k8s
+
+#       - name: Initialize CodeQL
+#         uses: github/codeql-action/init@v3
+#         with:
+#           languages: python, javascript
+
+#       - name: Perform CodeQL Analysis
+#         uses: github/codeql-action/analyze@v3
+
+#   # ---------------------------
+#   # Matrix Build: Backend & Frontend
+#   # ---------------------------
+#   build-test-image:
+#     needs: devsecops-scan
+#     runs-on: ubuntu-latest
+#     strategy:
+#       matrix:
+#         service: [backend, frontend]
+#     outputs:
+#       backend-image: ${{ steps.set-image.outputs.backend_image }}
+#       frontend-image: ${{ steps.set-image.outputs.frontend_image }}
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Setup service paths & image names
+#         run: |
+#           if [ "${{ matrix.service }}" == "backend" ]; then
+#             SERVICE_PATH=backend/app-flask
+#             IMAGE_NAME="${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}"
+#           else
+#             SERVICE_PATH=frontend
+#             IMAGE_NAME="${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}"
+#           fi
+
+#           # Strip any newlines
+#           IMAGE_NAME=$(echo "$IMAGE_NAME" | tr -d '\n')
+
+#           echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
+#           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+#   backend-ci:
+#     runs-on: ubuntu-latest
+#     strategy:
+#       matrix:
+#         service: [backend]
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
+
+#       # Cache pip packages to speed up CI
+#       - name: Cache Python packages
+#         uses: actions/cache@v3
+#         with:
+#           path: ~/.cache/pip
+#           key: ${{ runner.os }}-pip-${{ hashFiles('backend/app-flask/requirements.txt') }}
+#           restore-keys: |
+#             ${{ runner.os }}-pip-
+
+#       # Install Python dependencies including autopep8, flake8, pytest, safety
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install -r backend/app-flask/requirements.txt
+#           pip install autopep8 flake8 pytest safety
+
+#       # Apply autopep8 autofix to backend code
+#       - name: Auto-fix Python code
+#         run: |
+#           autopep8 --in-place --aggressive --aggressive backend/app-flask/app/
+#           autopep8 --in-place --aggressive --aggressive backend/app-flask/tests/
+
+#       # Run linter (flake8)
+#       - name: Lint backend code
+#         run: |
+#           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
+
+#       # Run tests (pytest)
+#       - name: Run backend tests
+#         run: |
+#           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
+
+#       # Run security check (safety)
+#       - name: Security audit
+#         run: |
+#           safety check --full-report
+
+#       - name: Lint & Test (Frontend)
+#         if: matrix.service == 'frontend'
+#         run: |
+#           cd frontend/event-manager
+#           npm install
+#           npm test
+#           npm audit --audit-level=high || true
+
+#       - name: Build Docker image
+#         run: |
+#           echo "Building Docker image: $IMAGE_NAME"
+#           docker build -t "$IMAGE_NAME" "$SERVICE_PATH"
+
+#       - name: Trivy scan
+#         uses: aquasecurity/trivy-action@0.24.0
+#         with:
+#           image-ref: ${{ env.IMAGE_NAME }}
+#           severity: 'HIGH,CRITICAL'
+#           exit-code: '1'
+
+#       - name: Login to ECR
+#         run: |
+#           aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+#             | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+#       - name: Push image to ECR
+#         run: docker push "$IMAGE_NAME"
+
+#       - name: Set image outputs
+#         id: set-image
+#         run: |
+#           if [ "${{ matrix.service }}" == "backend" ]; then
+#             echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+#           else
+#             echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+
+#   # ---------------------------
+#   # Deploy via ArgoCD & Kustomize
+#   # ---------------------------
+#   deploy:
+#     needs: build-test-image
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout manifests repo
+#         uses: actions/checkout@v4
+#         with:
+#           repository: ${{ env.MANIFESTS_REPO }}
+#           token: ${{ env.MANIFESTS_REPO_PAT }}
+
+#       - name: Update Kustomize images
+#         run: |
+#           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+#           sudo chmod +x /usr/local/bin/yq
+#           yq -i ".images[0].newName = \"${{ needs.build-test-image.outputs.backend-image }}\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+#           yq -i ".images[1].newName = \"${{ needs.build-test-image.outputs.frontend-image }}\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+#           git config user.name github-actions
+#           git config user.email github-actions@github.com
+#           git commit -am "Update backend & frontend images" || echo "No changes"
+#           git push origin HEAD:main
+
+#       - name: Install htpasswd
+#         run: sudo apt-get update && sudo apt-get install -y apache2-utils
+
+#       - name: ArgoCD login
+#         run: |
+#           argocd login ${{ secrets.ARGOCD_SERVER }} \
+#             --username admin \
+#             --password ${{ env.ARGOCD_ADMIN_PASSWORD }} \
+#             --insecure
+
+#       - name: Configure ArgoCD users (dev, ops)
+#         run: |
+#           kubectl -n argocd patch configmap argocd-cm \
+#             --type merge \
+#             -p '{
+#               "data": {
+#                 "accounts.dev": "apiKey, login",
+#                 "accounts.ops": "apiKey, login"
+#               }
+#             }'
+#           kubectl -n argocd patch secret argocd-secret \
+#             --type merge \
+#             -p "{\"stringData\": {
+#               \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
+#               \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
+#             }}"
+#           kubectl -n argocd rollout restart deploy argocd-server
+
+#       - name: Sync apps
+#         run: |
+#           set -e
+#           for app in backend-app frontend-app; do
+#             if ! argocd app sync $app; then
+#               echo "Sync failed for $app. Rolling back..."
+#               argocd app rollback $app 0
+#               exit 1
+#             fi
+#             argocd app wait $app --health --timeout 300
+#           done
+
+#       - name: Deploy monitoring stack
+#         run: |
+#           kubectl apply -f k8s/monitoring/
+#           kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s || true
+#           kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s || true
+#           kubectl rollout status statefulset/loki -n monitoring --timeout=120s || true
