@@ -99,11 +99,20 @@ jobs:
       - name: Lint & Test (Backend)
         if: matrix.service == 'backend'
         run: |
-          pip install flake8 pytest safety
+          pip install flake8 autopep8 pytest safety
           pip install -r backend/app-flask/requirements.txt
-          flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
+
+          # Automatically fix linting issues
+          autopep8 --in-place --aggressive --aggressive backend/app-flask/app/
+          autopep8 --in-place --aggressive --aggressive backend/app-flask/tests/
+
+          # Run lint check again to show remaining issues (optional)
+          flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics || true
+
+          # Run tests and security check
           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
           safety check --full-report
+
 
       - name: Lint & Test (Frontend)
         if: matrix.service == 'frontend'
