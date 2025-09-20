@@ -97,10 +97,11 @@ jobs:
 
       # ---------------------------
       # Docker build & scan
-      # ---------------------------
+    # ---------------------------
       - name: Build Docker image
         run: |
-          IMAGE=${{ secrets.ECR_REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          IMAGE="${{ secrets.ECR_REGISTRY }}/$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]'):${{ github.sha }}"
+          echo "Building image: $IMAGE"
           docker build -t "$IMAGE" .
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
@@ -114,10 +115,13 @@ jobs:
 
       - name: Login to ECR
         run: |
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
       - name: Push image to ECR
-        run: docker push "${{ env.IMAGE }}"
+        run: |
+          echo "Pushing image: $IMAGE"
+          docker push "${{ env.IMAGE }}"
 
       # ---------------------------
       # Update manifests repo (GitOps style)
