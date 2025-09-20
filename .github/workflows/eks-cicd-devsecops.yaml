@@ -104,8 +104,8 @@ jobs:
           pip install -r backend/app-flask/requirements.txt
           pip install autopep8 flake8 pytest safety
 
-          autopep8 --in-place --aggressive --aggressive backend/app-flask/app/
-          autopep8 --in-place --aggressive --aggressive backend/app-flask/tests/
+          autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/app/
+          autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/tests/
 
           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
