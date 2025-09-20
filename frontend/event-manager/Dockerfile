@@ -21,4 +21,5 @@ COPY --from=build /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["gunicorn", "--worker-class", "eventlet", "--bind", "0.0.0.0:5000", "app.app:app"]
+
