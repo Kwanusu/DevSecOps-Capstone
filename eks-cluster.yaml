@@ -1,0 +1,47 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: devsecops-cluster
+  region: eu-north-1
+  version: "1.29"
+
+vpc:
+  cidr: "10.0.0.0/16"
+  nat:
+    gateway: Single
+  subnets:
+    private:
+      eu-north-1a: { cidr: "10.0.1.0/24" }
+      eu-north-1b: { cidr: "10.0.2.0/24" }
+    public:
+      eu-north-1a: { cidr: "10.0.101.0/24" }
+      eu-north-1b: { cidr: "10.0.102.0/24" }
+
+iam:
+  withOIDC: true
+  serviceAccounts:
+    - metadata:
+        name: vpc-cni
+        namespace: kube-system
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+    - metadata:
+        name: cluster-autoscaler
+        namespace: kube-system
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterAutoscalerPolicy
+
+managedNodeGroups:
+  - name: dev-nodes
+    instanceType: t3.small
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 2
+    iam:
+      withAddonPolicies:
+        autoScaler: true
+        externalDNS: true
+    ssh:
+      allow: true
+      publicKeyName: devsecops-key
