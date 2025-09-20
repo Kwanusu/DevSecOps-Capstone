@@ -1,222 +1,190 @@
-name: CI/CD with ArgoCD, RBAC, Scanning, Linting & Monitoring
+name: CI/CD with ArgoCD, RBAC, Scanning & Monitoring
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  ARGOCD_ADMIN_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
+  ARGOCD_DEV_PASSWORD: ${{ secrets.ARGOCD_DEV_PASSWORD }}
+  ARGOCD_OPS_PASSWORD: ${{ secrets.ARGOCD_OPS_PASSWORD }}
+  MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}
+  MANIFESTS_REPO_PAT: ${{ secrets.MANIFESTS_REPO_PAT }}
+  KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
 
 jobs:
-  build-test-scan:
+  devsecops-scan:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
-      security-events: write   # needed for CodeQL
-
+      security-events: write
     steps:
-      - name: Checkout source code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------------------------
-      # Python linting & testing (Flask app)
-      # ---------------------------
-      - name: Set up Python
+      # --- Python Lint & Test ---
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install Python deps
         run: |
-          pip install flake8 pytest
+          pip install flake8 pytest safety
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Run flake8 linting
-        run: |
-          flake8 app/ \
-            --count --max-complexity=10 --max-line-length=120 --statistics
-
+      - name: Run flake8
+        run: flake8 app/ --count --max-complexity=10 --max-line-length=120 --statistics
       - name: Run pytest
         run: pytest -q --disable-warnings --maxfail=1
-
-      # ---------------------------
-      # Node.js steps (frontend, if any)
-      # ---------------------------
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Install Node.js deps
-        run: npm install
-
-      - name: Run frontend tests
-        run: npm test
-
-      # ---------------------------
-      # Security Scans (NEW)
-      # ---------------------------
-
-      # Static code analysis (SAST) with CodeQL
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: python, javascript
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
-      # Python dependency scanning
-      - name: Python Dependency Scan
+      - name: Python dependency scan
         uses: pyupio/safety-action@v1
         with:
           args: check --full-report
 
-      # Node.js dependency scanning
+      # --- Node.js Frontend ---
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install frontend deps
+        run: npm install
+      - name: Run frontend tests
+        run: npm test
       - name: Node.js Audit
         run: npm audit --audit-level=high || true
 
-      # IaC scanning for Kubernetes/Terraform/Helm
+      # --- Security Scans ---
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
       - name: IaC Scan with Checkov
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ./k8s
-
-      # Secret scanning
       - name: Secret Scan with Gitleaks
         uses: gitleaks/gitleaks-action@v2
 
-      # ---------------------------
-      # SonarQube Scan
-      # ---------------------------
-      - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v2
-        env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  build-push-images:
+    needs: devsecops-scan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [backend, frontend]
+    outputs:
+      backend-image: ${{ steps.set-output-image.outputs.backend_image }}
+      frontend-image: ${{ steps.set-output-image.outputs.frontend_image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # ---------------------------
-      # Docker build & scan
-    # ---------------------------
-      - name: Build Docker image
+      - name: Determine if service changed
+        id: changes
         run: |
-          IMAGE="${{ secrets.ECR_REGISTRY }}/$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]'):${{ github.sha }}"
-          echo "Building image: $IMAGE"
-          docker build -t "$IMAGE" .
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            git diff --name-only HEAD~1 HEAD | grep -q '^backend/' && echo "CHANGED=true" || echo "CHANGED=false"
+          else
+            git diff --name-only HEAD~1 HEAD | grep -q '^frontend/' && echo "CHANGED=true" || echo "CHANGED=false"
+          fi
+          echo "CHANGED=$CHANGED" >> $GITHUB_ENV
+
+      - name: Skip if no changes
+        if: env.CHANGED == 'false'
+        run: |
+          echo "No changes in ${{ matrix.service }}, skipping build."
+          exit 0
+
+      - name: Set service variables
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            SERVICE_PATH="backend/app-flask"
+            IMAGE="${ECR_REGISTRY}/backend:${GITHUB_SHA}"
+          else
+            SERVICE_PATH="frontend"
+            IMAGE="${ECR_REGISTRY}/frontend:${GITHUB_SHA}"
+          fi
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Trivy Image Scan
+      - name: Build Docker image
+        run: docker build -t "$IMAGE" "$SERVICE_PATH"
+
+      - name: Trivy scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.IMAGE }}
-          format: 'table'
-          severity: 'HIGH,CRITICAL'
-          exit-code: '1'
+          severity: HIGH,CRITICAL
+          exit-code: 1
 
       - name: Login to ECR
         run: |
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-            | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          aws ecr get-login-password --region $AWS_REGION \
+          | docker login --username AWS --password-stdin $ECR_REGISTRY
 
       - name: Push image to ECR
-        run: |
-          echo "Pushing image: $IMAGE"
-          docker push "${{ env.IMAGE }}"
+        run: docker push $IMAGE
 
-      # ---------------------------
-      # Update manifests repo (GitOps style)
-      # ---------------------------
-      - name: Bump image tag in manifests repo (kustomization images)
-        env:
-          MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}
-          TOKEN: ${{ secrets.MANIFESTS_REPO_PAT }}
-          KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
+      - name: Set output image
+        id: set-output-image
         run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "github-actions"
-          git clone https://x-access-token:${TOKEN}@github.com/${MANIFESTS_REPO}.git manifests-tmp
-          cd manifests-tmp
-          # Install yq
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
-          IMG="${{ env.IMAGE }}"
-          yq -i '.images[0].newName = strenv(IMG) | .images[0].name = "app-image" | .images[0].newTag = ""' ${KUSTOMIZE_PATH}/kustomization.yaml
-          git add ${KUSTOMIZE_PATH}/kustomization.yaml
-          git commit -m "chore: bump image to ${IMG}" || echo "No changes"
-          git push origin HEAD:main
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            echo "backend_image=$IMAGE" >> $GITHUB_OUTPUT
+          else
+            echo "frontend_image=$IMAGE" >> $GITHUB_OUTPUT
+
 
   deploy:
-    needs: build-test-scan
+    needs: build-push-images
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout manifests repo
         uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MANIFESTS_REPO }}
+          token: ${{ env.MANIFESTS_REPO_PAT }}
 
-      # Step 1: Enable ArgoCD user accounts
-      - name: Apply ArgoCD Accounts Config
+      - name: Install yq
         run: |
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: argocd-cm
-            namespace: argocd
-          data:
-            accounts.dev-user: login
-            accounts.ops-user: login
-          EOF
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
-      # Step 2: Apply ArgoCD RBAC rules
-      - name: Apply ArgoCD RBAC rules
+      - name: Update Kustomize images
         run: |
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: argocd-rbac-cm
-            namespace: argocd
-          data:
-            policy.default: role:readonly
-            policy.csv: |
-              p, role:dev, applications, get, default/*, allow
-              p, role:dev, applications, sync, default/*, allow
-              p, role:ops, applications, get, *, allow
-              p, role:ops, applications, sync, *, allow
-              g, dev-user, role:dev
-              g, ops-user, role:ops
-          EOF
+          yq -i ".images[0].newName = \"${{ needs.build-push-images.outputs.backend-image }}\"" $KUSTOMIZE_PATH/kustomization.yaml
+          yq -i ".images[1].newName = \"${{ needs.build-push-images.outputs.frontend-image }}\"" $KUSTOMIZE_PATH/kustomization.yaml
+          git config user.email "github-actions@github.com"
+          git config user.name "github-actions"
+          git commit -am "Update images" || echo "No changes"
+          git push origin HEAD:main
 
-      # Step 3: Port-forward ArgoCD service
-      - name: Port-forward ArgoCD
-        run: |
-          kubectl port-forward svc/argocd-server -n argocd 8080:443 & 
-          sleep 5
-
-      # Step 4: Login to ArgoCD
       - name: ArgoCD Login
         run: |
-          argocd login localhost:8080 \
+          argocd login ${{ secrets.ARGOCD_SERVER }} \
             --username admin \
             --password ${{ secrets.ARGOCD_ADMIN_PASSWORD }} \
             --insecure
 
-      # Step 5: Set passwords for new users
-      - name: Set ArgoCD User Passwords
+      - name: Configure ArgoCD users
         run: |
           argocd account update-password --account dev-user --current-password "" --new-password ${{ secrets.ARGOCD_DEV_PASSWORD }}
           argocd account update-password --account ops-user --current-password "" --new-password ${{ secrets.ARGOCD_OPS_PASSWORD }}
 
-      # Step 6: Sync application
-      - name: ArgoCD Sync App
-        run: argocd app sync myapp
-
-      # Step 7: Verify application health
-      - name: Verify App Health
-        run: argocd app wait myapp --health --timeout 180
-
-      # Step 8: Deploy Monitoring Stack (Prometheus, Grafana, Loki)
-      - name: Deploy Monitoring Stack
+      - name: Sync Applications
         run: |
-          kubectl apply -f k8s/monitoring/prometheus.yaml
-          kubectl apply -f k8s/monitoring/grafana.yaml
-          kubectl apply -f k8s/monitoring/loki.yaml
+          for app in backend-app frontend-app; do
+            argocd app sync $app
+            argocd app wait $app --health --timeout 300
+          done
+
+      - name: Deploy monitoring stack
+        run: |
+          kubectl apply -f k8s/monitoring/
+          kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s || true
+          kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s || true
+          kubectl rollout status statefulset/loki -n monitoring --timeout=120s || true

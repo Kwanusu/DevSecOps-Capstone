@@ -74,30 +74,30 @@ jobs:
       matrix:
         service: [backend, frontend]
     outputs:
-      backend-image: ${{ steps.set-image.outputs.backend_image }}
-      frontend-image: ${{ steps.set-image.outputs.frontend_image }}
+      backend-image: ${{ steps.set-image.outputs.backend_image || '' }}
+      frontend-image: ${{ steps.set-image.outputs.frontend_image || '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup backend/frontend
+      - name: Setup service paths & image names
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
             echo "SERVICE_PATH=backend/app-flask" >> $GITHUB_ENV
-            echo "IMAGE_NAME=${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}" >> $GITHUB_ENV
+            IMAGE_NAME="${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}"
           else
             echo "SERVICE_PATH=frontend" >> $GITHUB_ENV
-            echo "IMAGE_NAME=${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}" >> $GITHUB_ENV
+            IMAGE_NAME="${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}"
           fi
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
 
       - name: Set image outputs
         id: set-image
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
           else
-            echo "frontend_image=${IMAGE_NAME}" >> $GITHUB_OUTPUT
-          fi
+            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
 
       - name: Lint & Test (Backend)
         if: matrix.service == 'backend'
@@ -117,7 +117,9 @@ jobs:
           npm audit --audit-level=high || true
 
       - name: Build Docker image
-        run: docker build -t $IMAGE_NAME $SERVICE_PATH
+        run: |
+          echo "Building Docker image: $IMAGE_NAME"
+          docker build -t "$IMAGE_NAME" "$SERVICE_PATH"
 
       - name: Trivy scan
         uses: aquasecurity/trivy-action@0.24.0
@@ -130,15 +132,7 @@ jobs:
         run: aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - name: Push image to ECR
-        run: docker push $IMAGE_NAME
-
-      - name: Set image outputs
-        id: sett-image
-        run: |
-          if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+        run: docker push "$IMAGE_NAME"
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
@@ -176,7 +170,6 @@ jobs:
 
       - name: Configure ArgoCD users (dev, ops)
         run: |
-          # Add dev and ops accounts to argocd-cm
           kubectl -n argocd patch configmap argocd-cm \
             --type merge \
             -p '{
@@ -185,16 +178,12 @@ jobs:
                 "accounts.ops": "apiKey, login"
               }
             }'
-
-          # Set hashed passwords into main argocd-secret
           kubectl -n argocd patch secret argocd-secret \
             --type merge \
             -p "{\"stringData\": {
               \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
               \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
             }}"
-
-          # Restart ArgoCD API server so changes take effect
           kubectl -n argocd rollout restart deploy argocd-server
 
       - name: Sync apps
