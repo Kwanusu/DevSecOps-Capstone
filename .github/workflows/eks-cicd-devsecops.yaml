@@ -30,18 +30,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # Full history for scanning all commits
+          fetch-depth: 0
 
-      # ---------------------------
-      # Install Gitleaks CLI
-      # ---------------------------
       - name: Install Gitleaks
         run: |
           curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /usr/local/bin
 
-      # ---------------------------
-      # Secret Scan using custom config
-      # ---------------------------
       - name: Secret Scan
         run: |
           gitleaks detect \
@@ -52,25 +46,16 @@ jobs:
             --report-path=results.sarif \
             --config .gitleaks.toml
 
-      # ---------------------------
-      # Upload SARIF results to GitHub Security Tab
-      # ---------------------------
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: results.sarif
 
-      # ---------------------------
-      # IaC scan (Checkov)
-      # ---------------------------
       - name: IaC Scan
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ./k8s
 
-      # ---------------------------
-      # SAST (CodeQL)
-      # ---------------------------
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -88,38 +73,13 @@ jobs:
     strategy:
       matrix:
         service: [backend, frontend]
-    permissions:
-      contents: write
-      packages: write
     outputs:
-      backend-image: ${{ steps.set-image.outputs.backend_image || '' }}
-      frontend-image: ${{ steps.set-image.outputs.frontend_image || '' }}
+      backend-image: ${{ steps.set-image.outputs.backend_image }}
+      frontend-image: ${{ steps.set-image.outputs.frontend_image }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ---------------------------
-      # Python & Node caching
-      # ---------------------------
-      - name: Cache Python packages
-        if: matrix.service == 'backend'
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('backend/app-flask/requirements.txt') }}
-          restore-keys: pip-
-
-      - name: Cache Node modules
-        if: matrix.service == 'frontend'
-        uses: actions/cache@v3
-        with:
-          path: frontend/node_modules
-          key: node-${{ hashFiles('frontend/package-lock.json') }}
-          restore-keys: node-
-
-      # ---------------------------
-      # Setup paths and image names
-      # ---------------------------
       - name: Setup backend/frontend
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
@@ -128,23 +88,18 @@ jobs:
           else
             echo "SERVICE_PATH=frontend" >> $GITHUB_ENV
             echo "IMAGE_NAME=${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}" >> $GITHUB_ENV
+          fi
 
-      # ---------------------------
-      # Backend Lint & Test
-      # ---------------------------
-      - name: Backend Lint & Test
+      - name: Lint & Test (Backend)
         if: matrix.service == 'backend'
         run: |
           pip install flake8 pytest safety
-          if [ -f backend/app-flask/requirements.txt ]; then pip install -r backend/app-flask/requirements.txt; fi
+          pip install -r backend/app-flask/requirements.txt
           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
           safety check --full-report
 
-      # ---------------------------
-      # Frontend Lint & Test
-      # ---------------------------
-      - name: Frontend Lint & Test
+      - name: Lint & Test (Frontend)
         if: matrix.service == 'frontend'
         run: |
           cd frontend
@@ -152,18 +107,6 @@ jobs:
           npm test
           npm audit --audit-level=high || true
 
-      # ---------------------------
-      # Restore self-signed cert (backend only)
-      # ---------------------------
-      - name: Restore self-signed cert
-        if: matrix.service == 'backend'
-        run: |
-          mkdir -p backend/app-flask/proxy/certs
-          echo "${{ secrets.SELF_SIGNED_KEY_BASE64 }}" | base64 --decode > backend/app-flask/proxy/certs/selfsigned.key
-
-      # ---------------------------
-      # Docker Build & Scan
-      # ---------------------------
       - name: Build Docker image
         run: docker build -t $IMAGE_NAME $SERVICE_PATH
 
@@ -175,18 +118,18 @@ jobs:
           exit-code: '1'
 
       - name: Login to ECR
-        run: aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+        run: aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - name: Push image to ECR
-        run: docker push ${{ env.IMAGE_NAME }}
+        run: docker push $IMAGE_NAME
 
       - name: Set image outputs
         id: set-image
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "::set-output name=backend_image::$IMAGE_NAME"
+            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
           else
-            echo "::set-output name=frontend_image::$IMAGE_NAME"
+            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
@@ -197,23 +140,19 @@ jobs:
     steps:
       - name: Checkout manifests repo
         uses: actions/checkout@v4
-
-      - name: Clone manifests repo
-        env:
-          TOKEN: ${{ secrets.MANIFESTS_REPO_PAT }}
-        run: |
-          git clone https://x-access-token:${TOKEN}@github.com/${{ env.MANIFESTS_REPO }}.git manifests-tmp
-          cd manifests-tmp
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+        with:
+          repository: ${{ env.MANIFESTS_REPO }}
+          token: ${{ env.MANIFESTS_REPO_PAT }}
 
       - name: Update Kustomize images
         run: |
-          cd manifests-tmp
-          yq -i ".images[0].newName = \"${{ needs.build-test-image.outputs.backend-image }}\" | .images[0].name = \"backend\" | .images[0].newTag = \"\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
-          yq -i ".images[1].newName = \"${{ needs.build-test-image.outputs.frontend-image }}\" | .images[1].name = \"frontend\" | .images[1].newTag = \"\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
-          git add .
-          git commit -m "Update images for backend & frontend" || echo "No changes"
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq -i ".images[0].newName = \"${{ needs.build-test-image.outputs.backend-image }}\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+          yq -i ".images[1].newName = \"${{ needs.build-test-image.outputs.frontend-image }}\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git commit -am "Update backend & frontend images" || echo "No changes"
           git push origin HEAD:main
 
       - name: ArgoCD login
@@ -223,14 +162,21 @@ jobs:
             --password ${{ env.ARGOCD_ADMIN_PASSWORD }} \
             --insecure
 
-      - name: ArgoCD sync app
-        run: argocd app sync myapp
-
-      - name: Wait for app health
-        run: argocd app wait myapp --health --timeout 300
+      - name: Sync apps
+        run: |
+          set -e
+          for app in backend-app frontend-app; do
+            if ! argocd app sync $app; then
+              echo "Sync failed for $app. Rolling back..."
+              argocd app rollback $app 0
+              exit 1
+            fi
+            argocd app wait $app --health --timeout 300
+          done
 
       - name: Deploy monitoring stack
         run: |
-          kubectl apply -f k8s/monitoring/prometheus.yaml
-          kubectl apply -f k8s/monitoring/grafana.yaml
-          kubectl apply -f k8s/monitoring/loki.yaml
+          kubectl apply -f k8s/monitoring/
+          kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s || true
+          kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s || true
+          kubectl rollout status statefulset/loki -n monitoring --timeout=120s || true
