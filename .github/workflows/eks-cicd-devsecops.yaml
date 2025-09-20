@@ -133,7 +133,7 @@ jobs:
         run: docker push $IMAGE_NAME
 
       - name: Set image outputs
-        id: set-image
+        id: sett-image
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
             echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
