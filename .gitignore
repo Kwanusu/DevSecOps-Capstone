@@ -109,6 +109,8 @@ ipython_config.py
 # pyenv
 # .python-version
 
+proxy/certs/selfsigned.key
+
 # pipenv
 # Pipfile.lock
 

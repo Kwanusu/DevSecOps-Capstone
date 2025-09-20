@@ -4,6 +4,8 @@
 ### Terraform ###
 # Local .terraform directories
 **/.terraform/*
+proxy/certs/selfsigned.key
+
 
 # .tfstate files
 *.tfstate

@@ -31,11 +31,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for Gitleaks full scan
 
       - name: Secret Scan
-        uses: gitleaks/gitleaks-action@v2
-        with:
-          args: --redact
+        run: gitleaks detect --redact -v --exit-code=2
 
       - name: IaC Scan
         uses: bridgecrewio/checkov-action@master
