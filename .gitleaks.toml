@@ -1,0 +1,5 @@
+[[rules]]
+id = "ignore-terraform"
+description = "Ignore terraform state file"
+regex = "infra-aks/terraform.tfstate"
+allowlist = ["infra-aks/terraform.tfstate"]
