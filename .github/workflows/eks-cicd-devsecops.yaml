@@ -21,56 +21,63 @@ jobs:
   # ---------------------------
   # Shared DevSecOps Scan
   # ---------------------------
-  devsecops-scan:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      security-events: write
-    steps:
-      - name: Checkout full history
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+devsecops-scan:
+  runs-on: ubuntu-latest
+  permissions:
+    contents: write
+    security-events: write
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # Full history for scanning all commits
 
-      # ---------------------------
-      # Install Gitleaks CLI
-      # ---------------------------
-      - name: Install Gitleaks
-        run: |
-          curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /usr/local/bin
+    # ---------------------------
+    # Install Gitleaks CLI
+    # ---------------------------
+    - name: Install Gitleaks
+      run: |
+        curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /usr/local/bin
 
-      # ---------------------------
-      # Secret Scan
-      # ---------------------------
-      - name: Secret Scan
-        run: gitleaks detect --redact -v --exit-code=2 --report-format=sarif --report-path=results.sarif --config-path .gitleaks.toml
+    # ---------------------------
+    # Secret Scan using custom config
+    # ---------------------------
+    - name: Secret Scan
+      run: |
+        gitleaks detect \
+          --redact 100 \
+          -v \
+          --exit-code=2 \
+          --report-format=sarif \
+          --report-path=results.sarif \
+          --config .gitleaks.toml
 
-      # ---------------------------
-      # Upload SARIF results for Security tab
-      # ---------------------------
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: results.sarif
+    # ---------------------------
+    # Upload SARIF results to GitHub Security Tab
+    # ---------------------------
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: results.sarif
 
-      # ---------------------------
-      # IaC Scan (Checkov)
-      # ---------------------------
-      - name: IaC Scan
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: ./k8s
+    # ---------------------------
+    # IaC scan (Checkov)
+    # ---------------------------
+    - name: IaC Scan
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: ./k8s
 
-      # ---------------------------
-      # SAST (CodeQL)
-      # ---------------------------
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: python, javascript
+    # ---------------------------
+    # SAST (CodeQL)
+    # ---------------------------
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: python, javascript
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
 
   # ---------------------------
   # Matrix Build: Backend & Frontend
