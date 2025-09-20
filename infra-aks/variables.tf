@@ -4,18 +4,20 @@ variable "prefix" {
   default     = "capstone"
 }
 
-variable "location" {
-  description = "Azure region"
+variable "region" {
+  description = "AWS region"
   type        = string
-  default     = "eastus"
+  default     = "us-east-1"
 }
 
 variable "node_count" {
-  type    = number
-  default = 2
+  description = "Number of worker nodes"
+  type        = number
+  default     = 2
 }
 
-variable "node_size" {
-  type    = string
-  default = "Standard_B4ms"
+variable "node_instance_type" {
+  description = "EC2 instance type for worker nodes"
+  type        = string
+  default     = "t3.medium"
 }

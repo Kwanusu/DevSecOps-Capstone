@@ -100,7 +100,7 @@ jobs:
       # ---------------------------
       - name: Build Docker image
         run: |
-          IMAGE=${{ secrets.CONTAINER_REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          IMAGE=${{ secrets.ECR_REGISTRY }}/${{ github.repository }}:${{ github.sha }}
           docker build -t "$IMAGE" .
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
@@ -112,11 +112,11 @@ jobs:
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
 
-      - name: Login to registry
+      - name: Login to ECR
         run: |
-          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.CONTAINER_REGISTRY }} -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
-      - name: Push image
+      - name: Push image to ECR
         run: docker push "${{ env.IMAGE }}"
 
       # ---------------------------
@@ -185,7 +185,7 @@ jobs:
       # Step 3: Port-forward ArgoCD service
       - name: Port-forward ArgoCD
         run: |
-          kubectl port-forward svc/argocd-server -n argocd 8080:443 &
+          kubectl port-forward svc/argocd-server -n argocd 8080:443 & 
           sleep 5
 
       # Step 4: Login to ArgoCD

@@ -15,5 +15,6 @@ replicas:
 
 images:
   - name: app-image
-    newName: ghcr.io/your-org/your-repo
+    newName: ghcr.io/kwanusu/devsecops-capstone:latest
+
     newTag: dev

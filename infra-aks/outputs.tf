@@ -1,7 +1,7 @@
 output "resource_group" {
-  value = azurerm_resource_group.rg.name
+  value = aws_eks_cluster.eks.cluster_name
 }
 
-output "aks_name" {
-  value = azurerm_kubernetes_cluster.aks.name
+output "eks_name" {
+  value = aws_eks_cluster.eks.name
 }
