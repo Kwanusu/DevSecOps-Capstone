@@ -90,6 +90,15 @@ jobs:
             echo "IMAGE_NAME=${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}" >> $GITHUB_ENV
           fi
 
+      - name: Set image outputs
+        id: set-image
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            echo "backend_image=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "frontend_image=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Lint & Test (Backend)
         if: matrix.service == 'backend'
         run: |
@@ -155,12 +164,38 @@ jobs:
           git commit -am "Update backend & frontend images" || echo "No changes"
           git push origin HEAD:main
 
+      - name: Install htpasswd
+        run: sudo apt-get update && sudo apt-get install -y apache2-utils
+
       - name: ArgoCD login
         run: |
           argocd login ${{ secrets.ARGOCD_SERVER }} \
             --username admin \
             --password ${{ env.ARGOCD_ADMIN_PASSWORD }} \
             --insecure
+
+      - name: Configure ArgoCD users (dev, ops)
+        run: |
+          # Add dev and ops accounts to argocd-cm
+          kubectl -n argocd patch configmap argocd-cm \
+            --type merge \
+            -p '{
+              "data": {
+                "accounts.dev": "apiKey, login",
+                "accounts.ops": "apiKey, login"
+              }
+            }'
+
+          # Set hashed passwords into main argocd-secret
+          kubectl -n argocd patch secret argocd-secret \
+            --type merge \
+            -p "{\"stringData\": {
+              \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
+              \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
+            }}"
+
+          # Restart ArgoCD API server so changes take effect
+          kubectl -n argocd rollout restart deploy argocd-server
 
       - name: Sync apps
         run: |
