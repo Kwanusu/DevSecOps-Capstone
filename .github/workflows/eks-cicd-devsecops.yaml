@@ -17,10 +17,10 @@ env:
   MANIFESTS_REPO_PAT: ${{ secrets.MANIFESTS_REPO_PAT }}
   KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
 
-# ---------------------------
-# Shared scanning job (runs once)
-# ---------------------------
 jobs:
+  # ---------------------------
+  # Shared DevSecOps Scan
+  # ---------------------------
   devsecops-scan:
     runs-on: ubuntu-latest
     permissions:
@@ -32,25 +32,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ---------------------------
-      # Secret scanning
-      # ---------------------------
       - name: Secret Scan
         uses: gitleaks/gitleaks-action@v2
         with:
           args: --redact
 
-      # ---------------------------
-      # IaC scan (Checkov)
-      # ---------------------------
       - name: IaC Scan
         uses: bridgecrewio/checkov-action@master
         with:
           directory: ./k8s
 
-      # ---------------------------
-      # SAST (CodeQL)
-      # ---------------------------
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -59,9 +50,9 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-# ---------------------------
-# Matrix for backend & frontend
-# ---------------------------
+  # ---------------------------
+  # Matrix Build: Backend & Frontend
+  # ---------------------------
   build-test-image:
     needs: devsecops-scan
     runs-on: ubuntu-latest
@@ -78,9 +69,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ---------------------------
-      # Backend or Frontend setup
-      # ---------------------------
+      # Setup paths and image names
       - name: Setup backend/frontend
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
@@ -90,7 +79,7 @@ jobs:
             echo "SERVICE_PATH=frontend" >> $GITHUB_ENV
             echo "IMAGE_NAME=${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}" >> $GITHUB_ENV
 
-      # Backend Python steps
+      # Backend Lint & Test
       - name: Backend Lint & Test
         if: matrix.service == 'backend'
         run: |
@@ -100,7 +89,7 @@ jobs:
           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
           safety check --full-report
 
-      # Frontend Node.js steps
+      # Frontend Lint & Test
       - name: Frontend Lint & Test
         if: matrix.service == 'frontend'
         run: |
@@ -109,9 +98,14 @@ jobs:
           npm test
           npm audit --audit-level=high || true
 
-      # ---------------------------
-      # Docker build & scan
-      # ---------------------------
+      # Restore self-signed cert (backend only)
+      - name: Restore self-signed cert
+        if: matrix.service == 'backend'
+        run: |
+          mkdir -p backend/app-flask/proxy/certs
+          echo "${{ secrets.SELF_SIGNED_KEY_BASE64 }}" | base64 --decode > backend/app-flask/proxy/certs/selfsigned.key
+
+      # Docker Build & Scan
       - name: Build Docker image
         run: docker build -t $IMAGE_NAME $SERVICE_PATH
 
@@ -136,9 +130,9 @@ jobs:
           else
             echo "::set-output name=frontend_image::$IMAGE_NAME"
 
-# ---------------------------
-# Deployment via ArgoCD & Kustomize
-# ---------------------------
+  # ---------------------------
+  # Deploy via ArgoCD & Kustomize
+  # ---------------------------
   deploy:
     needs: build-test-image
     runs-on: ubuntu-latest
