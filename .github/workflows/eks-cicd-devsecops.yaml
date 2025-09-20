@@ -1,4 +1,4 @@
-name: EKS CI/CD with Optimized DevSecOps, ArgoCD & Monitoring
+name: EKS CI/CD with DevSecOps, ArgoCD & Monitoring
 
 on:
   push:
@@ -27,10 +27,10 @@ jobs:
       contents: write
       security-events: write
     steps:
-      - name: Checkout code
+      - name: Checkout full history
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # Fetch full history so Gitleaks can scan all commits
+          fetch-depth: 0
 
       # ---------------------------
       # Install Gitleaks CLI
@@ -43,16 +43,18 @@ jobs:
       # Secret Scan
       # ---------------------------
       - name: Secret Scan
-        run: gitleaks detect --redact -v --exit-code=2 --report-format=sarif --report-path=results.sarif
+        run: gitleaks detect --redact -v --exit-code=2 --report-format=sarif --report-path=results.sarif --config-path .gitleaks.toml
 
-      # Upload SARIF results for GitHub security tab
+      # ---------------------------
+      # Upload SARIF results for Security tab
+      # ---------------------------
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: results.sarif
 
       # ---------------------------
-      # IaC scan (Checkov)
+      # IaC Scan (Checkov)
       # ---------------------------
       - name: IaC Scan
         uses: bridgecrewio/checkov-action@master
@@ -89,7 +91,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ---------------------------
+      # Python & Node caching
+      # ---------------------------
+      - name: Cache Python packages
+        if: matrix.service == 'backend'
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('backend/app-flask/requirements.txt') }}
+          restore-keys: pip-
+
+      - name: Cache Node modules
+        if: matrix.service == 'frontend'
+        uses: actions/cache@v3
+        with:
+          path: frontend/node_modules
+          key: node-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: node-
+
+      # ---------------------------
       # Setup paths and image names
+      # ---------------------------
       - name: Setup backend/frontend
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
@@ -99,7 +122,9 @@ jobs:
             echo "SERVICE_PATH=frontend" >> $GITHUB_ENV
             echo "IMAGE_NAME=${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}" >> $GITHUB_ENV
 
+      # ---------------------------
       # Backend Lint & Test
+      # ---------------------------
       - name: Backend Lint & Test
         if: matrix.service == 'backend'
         run: |
@@ -109,7 +134,9 @@ jobs:
           pytest backend/app-flask/ -q --disable-warnings --maxfail=1
           safety check --full-report
 
+      # ---------------------------
       # Frontend Lint & Test
+      # ---------------------------
       - name: Frontend Lint & Test
         if: matrix.service == 'frontend'
         run: |
@@ -118,14 +145,18 @@ jobs:
           npm test
           npm audit --audit-level=high || true
 
+      # ---------------------------
       # Restore self-signed cert (backend only)
+      # ---------------------------
       - name: Restore self-signed cert
         if: matrix.service == 'backend'
         run: |
           mkdir -p backend/app-flask/proxy/certs
           echo "${{ secrets.SELF_SIGNED_KEY_BASE64 }}" | base64 --decode > backend/app-flask/proxy/certs/selfsigned.key
 
+      # ---------------------------
       # Docker Build & Scan
+      # ---------------------------
       - name: Build Docker image
         run: docker build -t $IMAGE_NAME $SERVICE_PATH
 
