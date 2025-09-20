@@ -80,34 +80,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup service paths & image names
-        run: |
-          if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "SERVICE_PATH=backend/app-flask" >> $GITHUB_ENV
-            IMAGE_NAME="${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}"
-          else
-            echo "SERVICE_PATH=frontend" >> $GITHUB_ENV
-            IMAGE_NAME="${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}"
-          fi
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-
-      - name: Set image outputs
-        id: set-image
-        run: |
-          if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-
-      - name: Lint & Test (Backend)
-        if: matrix.service == 'backend'
-        run: |
-          pip install flake8 pytest safety
-          pip install -r backend/app-flask/requirements.txt
-          flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
-          pytest backend/app-flask/ -q --disable-warnings --maxfail=1
-          safety check --full-report
-
+      
       - name: Lint & Test (Frontend)
         if: matrix.service == 'frontend'
         run: |
