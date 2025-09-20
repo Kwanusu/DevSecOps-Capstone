@@ -108,7 +108,7 @@ jobs:
       - name: Lint & Test (Frontend)
         if: matrix.service == 'frontend'
         run: |
-          cd event-management
+          cd event-manager
           npm install
           npm test
           npm audit --audit-level=high || true
