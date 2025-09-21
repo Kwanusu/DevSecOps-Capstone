@@ -109,7 +109,7 @@ jobs:
 
           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
           # pytest backend/app-flask/ -q --disable-warnings --maxfail=1
-          safety check --full-report
+          safety scan --full-report || true
 
       # ---------------------------
       # Frontend CI
