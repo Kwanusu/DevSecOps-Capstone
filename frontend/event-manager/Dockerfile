@@ -7,7 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --include=dev
 COPY . .
-RUN npm run build
+ENV NODE_ENV=production
+RUN npm run build --verbose
 
 # =========================
 # 2. Serve with Nginx
