@@ -153,21 +153,31 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names devsecops-capstone/backend || \
+          aws ecr create-repository --repository-name devsecops-capstone/backend
+
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region $AWS_REGION \
             | docker login --username AWS --password-stdin $ECR_REGISTRY
 
+      - name: Tag Docker image for ECR
+        run: |
+          docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+
       - name: Push image to ECR
-        run: docker push "$IMAGE_NAME"
+        run: docker push "$ECR_REGISTRY/devsecops-capstone/backend:latest"
 
       - name: Set image outputs
         id: set-image
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+            echo "backend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
           else
-            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
+
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
