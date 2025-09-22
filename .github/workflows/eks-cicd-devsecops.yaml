@@ -142,63 +142,52 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set service-specific variables
+      - name: Set service-specific variables and ensure ECR repository exists
+        id: set-vars-and-check-repo
         run: |
-          # Trim any accidental spaces from the ECR_REGISTRY secret
-          ECR_REGISTRY="$(echo '${{ secrets.ECR_REGISTRY }}' | xargs)"
-
           if [ "${{ matrix.service }}" == "backend" ]; then
-            IMAGE_NAME="$ECR_REGISTRY/devsecops-capstone-backend:latest"
-            SERVICE_PATH=backend/app-flask
             REPO_NAME=devsecops-capstone-backend
+            SERVICE_PATH=backend/app-flask
           else
-            IMAGE_NAME="$ECR_REGISTRY/devsecops-capstone-frontend:latest"
-            SERVICE_PATH=frontend/event-manager
             REPO_NAME=devsecops-capstone-frontend
+            SERVICE_PATH=frontend/event-manager
           fi
-
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
-          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
-
-      - name: Debug image name
-        run: echo "Docker image to build: '$IMAGE_NAME'"
-
-      - name: Ensure ECR repository exists
-        run: |
+          
+          # Ensure ECR repository exists before building and pushing
           aws ecr describe-repositories --repository-names $REPO_NAME || \
           aws ecr create-repository --repository-name $REPO_NAME
-
-      - name: Log in to Amazon ECR
-        run: |
-          aws ecr get-login-password --region $AWS_REGION \
-            | docker login --username AWS --password-stdin $ECR_REGISTRY
+          
+          IMAGE_NAME=${{ env.ECR_REGISTRY }}/$REPO_NAME:latest
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV # Storing for later use
 
       - name: Build Docker image
         run: |
-          echo "Building Docker image: $IMAGE_NAME"
-          docker build -t "$IMAGE_NAME" "$SERVICE_PATH"
+          echo "Building Docker image: ${{ env.IMAGE_NAME }}"
+          docker build -t "${{ env.IMAGE_NAME }}" "${{ env.SERVICE_PATH }}"
 
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.48.0 # Use a more recent version
         with:
           image-ref: ${{ env.IMAGE_NAME }}
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
 
+      - name: Log in to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
       - name: Push Docker image to ECR
         run: |
-          docker push "$IMAGE_NAME"
+          docker push "${{ env.IMAGE_NAME }}"
 
       - name: Set image outputs
         id: set-image
         run: |
-          if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          fi
-
+          # Set a single output variable with the image name
+          echo "image_name=${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
   # ---------------------------
