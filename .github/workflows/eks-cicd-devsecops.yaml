@@ -168,12 +168,12 @@ jobs:
           docker build -t "${{ env.IMAGE_NAME }}" "${{ env.SERVICE_PATH }}"
 
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@v0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
-
+          
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} \
