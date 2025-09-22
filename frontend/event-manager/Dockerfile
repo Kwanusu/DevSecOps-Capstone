@@ -22,8 +22,9 @@ RUN npm run build --verbose
 # =========================
 # Serve with Nginx
 # =========================
-FROM nginx:alpine3.22.2
+FROM nginx:stable-alpine
 
+RUN apk update && apk upgrade --no-cache
 # Copy React build to Nginx html folder
 COPY --from=build /app/dist /usr/share/nginx/html
 
