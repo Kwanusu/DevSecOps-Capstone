@@ -158,6 +158,10 @@ jobs:
           aws ecr describe-repositories --repository-names devsecops-capstone/backend || \
           aws ecr create-repository --repository-name devsecops-capstone/backend
 
+      - name: Sanitize ECR_REGISTRY
+        run: |
+          echo "ECR_REGISTRY=$(echo $ECR_REGISTRY | tr -d '\n')" >> $GITHUB_ENV
+          
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region $AWS_REGION \
