@@ -137,16 +137,24 @@ jobs:
       - name: Set service-specific variables
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "IMAGE_NAME=$ECR_REGISTRY/devsecops-capstone-backend:latest" >> $GITHUB_ENV
-            echo "SERVICE_PATH=backend/app-flask" >> $GITHUB_ENV
+            IMAGE_NAME="$ECR_REGISTRY/devsecops-capstone-backend:latest"
+            SERVICE_PATH="backend/app-flask"
           else
-            echo "IMAGE_NAME=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_ENV
-            echo "SERVICE_PATH=frontend/event-manager" >> $GITHUB_ENV
-          fi  
+            IMAGE_NAME="$ECR_REGISTRY/devsecops-capstone-frontend:latest"
+            SERVICE_PATH="frontend/event-manager"
+          fi
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
 
       - name: Ensure ECR repository exists
         run: |
-          REPO_NAME="${IMAGE_NAME##*/}"  # Extract repo name from full image URI
+          # Use shell variable here
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            REPO_NAME="devsecops-capstone-backend"
+          else
+            REPO_NAME="devsecops-capstone-frontend"
+          fi
+
           aws ecr describe-repositories --repository-names $REPO_NAME || \
           aws ecr create-repository --repository-name $REPO_NAME
 
@@ -178,7 +186,7 @@ jobs:
             echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
           else
             echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          fi  
+          fi
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
