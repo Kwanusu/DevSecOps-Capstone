@@ -131,56 +131,56 @@ jobs:
           npx eslint . --fix || true
           npm audit --audit-level=high || true
 
-      # ---------------------------
-      # Build Docker Image
-      # ---------------------------
-      - name: Build Docker image
-        run: |
-          echo "Building Docker image: $IMAGE_NAME"
-          docker build -t "$IMAGE_NAME" "$SERVICE_PATH"
+     # ---------------------------
+        # Build Docker Image
+        # ---------------------------
+        - name: Build Docker image
+          run: |
+            echo "Building Docker image: $IMAGE_NAME"
+            docker build -t "$IMAGE_NAME" "$SERVICE_PATH"
 
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}
-          severity: 'HIGH,CRITICAL'
-          exit-code: '1'
+        - name: Trivy scan
+          uses: aquasecurity/trivy-action@0.24.0
+          with:
+            image-ref: ${{ env.IMAGE_NAME }}
+            severity: 'HIGH,CRITICAL'
+            exit-code: '1'
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+        - name: Configure AWS credentials
+          uses: aws-actions/configure-aws-credentials@v4
+          with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure ECR repository exists
-        run: |
-          aws ecr describe-repositories --repository-names devsecops-capstone/backend || \
-          aws ecr create-repository --repository-name devsecops-capstone/backend
+        - name: Ensure ECR repository exists
+          run: |
+            aws ecr describe-repositories --repository-names devsecops-capstone-backend || \
+            aws ecr create-repository --repository-name devsecops-capstone-backend
 
-      - name: Sanitize ECR_REGISTRY
-        run: |
-          echo "ECR_REGISTRY=$(echo $ECR_REGISTRY | tr -d '\n')" >> $GITHUB_ENV
-          
-      - name: Log in to Amazon ECR
-        run: |
-          aws ecr get-login-password --region $AWS_REGION \
-            | docker login --username AWS --password-stdin $ECR_REGISTRY
+        - name: Sanitize ECR_REGISTRY
+          run: |
+            echo "ECR_REGISTRY=$(echo $ECR_REGISTRY | tr -d '\n')" >> $GITHUB_ENV
+                  
+        - name: Log in to Amazon ECR
+          run: |
+            aws ecr get-login-password --region $AWS_REGION \
+              | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-      - name: Tag Docker image for ECR
-        run: |
-          docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+        - name: Tag Docker image for ECR
+          run: |
+            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone-backend:latest"
 
-      - name: Push image to ECR
-        run: docker push "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+        - name: Push image to ECR
+          run: docker push "$ECR_REGISTRY/devsecops-capstone-backend:latest"
 
-      - name: Set image outputs
-        id: set-image
-        run: |
-          if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
-          else
-            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
+        - name: Set image outputs
+          id: set-image
+          run: |
+            if [ "${{ matrix.service }}" == "backend" ]; then
+              echo "backend_image=$ECR_REGISTRY/devsecops-capstone-backend:latest" >> $GITHUB_OUTPUT
+            else
+              echo "frontend_image=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_OUTPUT
 
 
   # ---------------------------
