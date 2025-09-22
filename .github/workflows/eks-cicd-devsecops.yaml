@@ -132,8 +132,23 @@ jobs:
           npm audit --audit-level=high || true
 
       # ---------------------------
-      # Build Docker Image
+      # Build, Scan, and Push Docker Image
       # ---------------------------
+      - name: Set service-specific variables
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            echo "IMAGE_NAME=$ECR_REGISTRY/devsecops-capstone-backend:latest" >> $GITHUB_ENV
+            echo "SERVICE_PATH=backend/app-flask" >> $GITHUB_ENV
+          else
+            echo "IMAGE_NAME=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_ENV
+            echo "SERVICE_PATH=frontend/event-manager" >> $GITHUB_ENV
+
+      - name: Ensure ECR repository exists
+        run: |
+          REPO_NAME="${IMAGE_NAME##*/}"  # Extract repo name from full image URI
+          aws ecr describe-repositories --repository-names $REPO_NAME || \
+          aws ecr create-repository --repository-name $REPO_NAME
+
       - name: Build Docker image
         run: |
           echo "Building Docker image: $IMAGE_NAME"
@@ -146,43 +161,22 @@ jobs:
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Ensure ECR repository exists
-        run: |
-          aws ecr describe-repositories --repository-names devsecops-capstone-backend || \
-          aws ecr create-repository --repository-name devsecops-capstone-backend
-          aws ecr describe-repositories --repository-names devsecops-capstone-frontend || \
-          aws ecr create-repository --repository-name devsecops-capstone-frontend
-
-      - name: Sanitize ECR_REGISTRY
-        run: |
-          echo "ECR_REGISTRY=$(echo $ECR_REGISTRY | tr -d '\n')" >> $GITHUB_ENV
-                
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region $AWS_REGION \
             | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-      - name: Tag Docker image for ECR
+      - name: Push Docker image to ECR
         run: |
-          docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone-backend:latest"
-
-      - name: Push image to ECR
-        run: docker push "$ECR_REGISTRY/devsecops-capstone-backend:latest"
+          docker push "$IMAGE_NAME"
 
       - name: Set image outputs
         id: set-image
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$ECR_REGISTRY/devsecops-capstone-backend:latest" >> $GITHUB_OUTPUT
+            echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
           else
-            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_OUTPUT
+            echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
