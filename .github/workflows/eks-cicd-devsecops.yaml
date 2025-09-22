@@ -142,6 +142,7 @@ jobs:
           else
             echo "IMAGE_NAME=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_ENV
             echo "SERVICE_PATH=frontend/event-manager" >> $GITHUB_ENV
+          fi  
 
       - name: Ensure ECR repository exists
         run: |
@@ -177,6 +178,7 @@ jobs:
             echo "backend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
           else
             echo "frontend_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          fi  
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
