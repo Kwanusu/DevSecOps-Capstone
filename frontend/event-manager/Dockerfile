@@ -25,7 +25,7 @@ RUN npm run build --verbose
 FROM nginx:alpine
 
 # Copy React build to Nginx html folder
-COPY --from=build /app/build /usr/share/nginx/html
+COPY --from=build /app/dist /usr/share/nginx/html
 
 # Optional: copy custom Nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
