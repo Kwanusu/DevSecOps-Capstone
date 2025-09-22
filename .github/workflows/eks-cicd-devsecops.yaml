@@ -134,6 +134,25 @@ jobs:
       # ---------------------------
       # Build, Scan, and Push Docker Image
       # ---------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            REPO_NAME=devsecops-capstone-backend
+          else
+            REPO_NAME=devsecops-capstone-frontend
+          fi
+
+          aws ecr describe-repositories --repository-names $REPO_NAME || \
+          aws ecr create-repository --repository-name $REPO_NAME
+      
       - name: Set service-specific variables
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
