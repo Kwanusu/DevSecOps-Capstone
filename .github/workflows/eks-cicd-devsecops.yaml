@@ -157,6 +157,8 @@ jobs:
         run: |
           aws ecr describe-repositories --repository-names devsecops-capstone-backend || \
           aws ecr create-repository --repository-name devsecops-capstone-backend
+          aws ecr describe-repositories --repository-names devsecops-capstone-frontend || \
+          aws ecr create-repository --repository-name devsecops-capstone-frontend
 
       - name: Sanitize ECR_REGISTRY
         run: |
