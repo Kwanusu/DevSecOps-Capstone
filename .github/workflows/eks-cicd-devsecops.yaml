@@ -91,7 +91,7 @@ jobs:
           echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
 
-      # ---------------------------
+     # ---------------------------
       # Backend CI
       # ---------------------------
       - name: Backend CI
@@ -100,11 +100,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/app-flask/requirements.txt
           pip install autopep8 flake8 pytest safety
+
+          # Code formatting & linting
           autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/app/
           autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/tests/
           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
-          pytest backend/app-flask/ -q --disable-warnings --maxfail=1
+
+          # ✅ Run tests with PYTHONPATH set
+          export PYTHONPATH=$PYTHONPATH:backend/app-flask
+          pytest backend/app-flask/tests --maxfail=1 --disable-warnings -q
+
+          # Security scan
           safety scan --full-report || true
+
 
       # ---------------------------
       # Frontend CI
