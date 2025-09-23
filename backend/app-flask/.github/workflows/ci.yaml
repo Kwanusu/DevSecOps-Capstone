@@ -14,7 +14,7 @@ env:
   ARGOCD_DEV_PASSWORD: ${{ secrets.ARGOCD_DEV_PASSWORD }}
   ARGOCD_OPS_PASSWORD: ${{ secrets.ARGOCD_OPS_PASSWORD }}
   MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}
-  MANIFESTS_REPO_PAT: ${{ secrets.MANIFESTS_REPO_PAT }}
+  MANIFESTS_REPO_PAT: ${{ secrets.MANIFEST_REPO_PAT }}
   KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
 
 jobs:
@@ -147,7 +147,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.MANIFESTS_REPO }}
-          token: ${{ env.MANIFESTS_REPO_PAT }}
+          token: ${{ env.MANIFEST_REPO_PAT }}
 
       - name: Install yq
         run: |
