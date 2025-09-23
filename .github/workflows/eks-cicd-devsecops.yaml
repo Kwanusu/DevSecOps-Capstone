@@ -174,26 +174,27 @@ jobs:
       - name: Tag Docker image for ECR
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone-backend:latest"
+            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/backend:latest"
           else
-            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone-frontend:latest"
+            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/frontend:latest"
           fi
 
       - name: Push image to ECR
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            docker push "$ECR_REGISTRY/devsecops-capstone-backend:latest"
+            docker push "$ECR_REGISTRY/devsecops-capstone/backend:latest"
           else
-            docker push "$ECR_REGISTRY/devsecops-capstone-frontend:latest"
+            docker push "$ECR_REGISTRY/devsecops-capstone/frontend:latest"
           fi
 
       - name: Set image outputs
         id: set-image
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
-            echo "backend_image=$ECR_REGISTRY/devsecops-capstone-backend:latest" >> $GITHUB_OUTPUT
+            echo "backend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
           else
-            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_OUTPUT
+            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone/frontend:latest" >> $GITHUB_OUTPUT
+          fi
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
