@@ -196,7 +196,7 @@ jobs:
             echo "frontend_image=$ECR_REGISTRY/frontend:latest" >> $GITHUB_OUTPUT
           fi
 
-  # ---------------------------
+  ## ---------------------------
   # Deploy via ArgoCD & Kustomize
   # ---------------------------
   deploy:
@@ -223,14 +223,11 @@ jobs:
       - name: Install htpasswd
         run: sudo apt-get update && sudo apt-get install -y apache2-utils
 
-      # ---------------------------
-      # Install ArgoCD CLI
-      # ---------------------------
       - name: Install ArgoCD CLI
         run: |
           sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           sudo chmod +x /usr/local/bin/argocd
-          argocd version
+          argocd version --client  # only shows CLI version, avoids server connection error
 
       - name: ArgoCD login
         run: |
@@ -252,10 +249,9 @@ jobs:
           kubectl -n argocd patch secret argocd-secret \
             --type merge \
             -p "{\"stringData\": {
-              \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
-              \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ env.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
+              \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ secrets.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
+              \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ secrets.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
             }}"
-          kubectl -n argocd rollout restart deploy argocd-server
 
       - name: Sync apps
         run: |
@@ -275,6 +271,7 @@ jobs:
           kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s
           kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s
           kubectl rollout status statefulset/loki -n monitoring --timeout=120s
+
 
 # name: EKS CI/CD with DevSecOps, ArgoCD & Monitoring
 # on:
