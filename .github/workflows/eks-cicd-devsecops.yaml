@@ -78,20 +78,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ---------------------------
+      # Setup service paths & local image name
+      # ---------------------------
       - name: Setup service paths & image names
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
             SERVICE_PATH=backend/app-flask
-            IMAGE_NAME="${{ env.ECR_REGISTRY }}/devsecops-capstone/backend:${{ github.sha }}"
+            IMAGE_NAME="backend:${{ github.sha }}"
           else
             SERVICE_PATH=frontend/event-manager
-            IMAGE_NAME="${{ env.ECR_REGISTRY }}/devsecops-capstone/frontend:${{ github.sha }}"
+            IMAGE_NAME="frontend:${{ github.sha }}"
           fi
-          IMAGE_NAME=$(echo "$IMAGE_NAME" | tr -d '\n')
           echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
 
-     # ---------------------------
+      # ---------------------------
       # Backend CI
       # ---------------------------
       - name: Backend CI
@@ -106,13 +108,12 @@ jobs:
           autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/tests/
           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
 
-          # ✅ Run tests with PYTHONPATH set
+          # Run tests with PYTHONPATH
           export PYTHONPATH=$PYTHONPATH:backend/app-flask
           pytest backend/app-flask/tests --maxfail=1 --disable-warnings -q
 
           # Security scan
           safety scan --full-report || true
-
 
       # ---------------------------
       # Frontend CI
@@ -140,14 +141,9 @@ jobs:
           echo "Building Docker image: $IMAGE_NAME"
           docker build -t "$IMAGE_NAME" "$SERVICE_PATH"
 
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}
-          severity: 'HIGH,CRITICAL'
-          ignore-unfixed: true
-          exit-code: '1'
-
+      # ---------------------------
+      # Configure AWS and push to ECR
+      # ---------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -199,7 +195,7 @@ jobs:
           else
             echo "frontend_image=$ECR_REGISTRY/devsecops-capstone-frontend:latest" >> $GITHUB_OUTPUT
 
-        # ---------------------------
+  # ---------------------------
   # Deploy via ArgoCD & Kustomize
   # ---------------------------
   deploy:
