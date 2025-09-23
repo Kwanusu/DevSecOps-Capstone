@@ -206,8 +206,8 @@ jobs:
       - name: Checkout manifests repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.MANIFESTS_REPO }}
-          token: ${{ env.MANIFEST_REPO_PAT }}
+          repository: ${{ secrets.MANIFESTS_REPO }}
+          token: ${{ secrets.MANIFEST_REPO_PAT }}
 
       - name: Update Kustomize images
         run: |
