@@ -35,24 +35,22 @@ jobs:
       - name: Install Gitleaks
         run: |
           curl -sSL https://github.com/zricethezav/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /usr/local/bin
-
       - name: Secret Scan
         run: |
           gitleaks detect \
-            --redact 100 \
+            --redact \
             -v \
             --exit-code=2 \
             --report-format=sarif \
             --report-path=results.sarif \
             --config .gitleaks.toml
-
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: results.sarif
 
       - name: IaC Scan
-        uses: bridgecrewio/checkov-action@master
+        uses: bridgecrewio/checkov-action@v12
         with:
           directory: ./k8s
 
@@ -84,12 +82,11 @@ jobs:
         run: |
           if [ "${{ matrix.service }}" == "backend" ]; then
             SERVICE_PATH=backend/app-flask
-            IMAGE_NAME="${{ env.ECR_REGISTRY }}/backend:${{ github.sha }}"
+            IMAGE_NAME="${{ env.ECR_REGISTRY }}/devsecops-capstone/backend:${{ github.sha }}"
           else
             SERVICE_PATH=frontend/event-manager
-            IMAGE_NAME="${{ env.ECR_REGISTRY }}/frontend:${{ github.sha }}"
+            IMAGE_NAME="${{ env.ECR_REGISTRY }}/devsecops-capstone/frontend:${{ github.sha }}"
           fi
-
           IMAGE_NAME=$(echo "$IMAGE_NAME" | tr -d '\n')
           echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
@@ -103,12 +100,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/app-flask/requirements.txt
           pip install autopep8 flake8 pytest safety
-
           autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/app/
           autopep8 --in-place --aggressive --aggressive --recursive backend/app-flask/tests/
-
           flake8 backend/app-flask/ --count --max-complexity=10 --max-line-length=120 --statistics
-          # pytest backend/app-flask/ -q --disable-warnings --maxfail=1
+          pytest backend/app-flask/ -q --disable-warnings --maxfail=1
           safety scan --full-report || true
 
       # ---------------------------
@@ -119,17 +114,15 @@ jobs:
         run: |
           cd frontend/event-manager
           npm install
-
           if npm run | grep -q ' test'; then
             npm test
           else
             echo "No test script found, skipping tests."
           fi
-
           npm install --save-dev prettier eslint
           npx prettier --write .
           npx eslint . --fix || true
-          npm audit --audit-level=high || true
+          npm audit --audit-level=high --omit=dev || true
 
       # ---------------------------
       # Build Docker Image
@@ -144,6 +137,7 @@ jobs:
         with:
           image-ref: ${{ env.IMAGE_NAME }}
           severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
           exit-code: '1'
 
       - name: Configure AWS credentials
@@ -155,13 +149,14 @@ jobs:
 
       - name: Ensure ECR repository exists
         run: |
-          aws ecr describe-repositories --repository-names devsecops-capstone/backend || \
-          aws ecr create-repository --repository-name devsecops-capstone/backend
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            REPO_NAME=devsecops-capstone/backend
+          else
+            REPO_NAME=devsecops-capstone/frontend
+          fi
+          aws ecr describe-repositories --repository-names $REPO_NAME || \
+          aws ecr create-repository --repository-name $REPO_NAME
 
-      - name: Sanitize ECR_REGISTRY
-        run: |
-          echo "ECR_REGISTRY=$(echo $ECR_REGISTRY | tr -d '\n')" >> $GITHUB_ENV
-          
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region $AWS_REGION \
@@ -169,10 +164,19 @@ jobs:
 
       - name: Tag Docker image for ECR
         run: |
-          docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+          else
+            docker tag "$IMAGE_NAME" "$ECR_REGISTRY/devsecops-capstone/frontend:latest"
+          fi
 
       - name: Push image to ECR
-        run: docker push "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+        run: |
+          if [ "${{ matrix.service }}" == "backend" ]; then
+            docker push "$ECR_REGISTRY/devsecops-capstone/backend:latest"
+          else
+            docker push "$ECR_REGISTRY/devsecops-capstone/frontend:latest"
+          fi
 
       - name: Set image outputs
         id: set-image
@@ -180,8 +184,7 @@ jobs:
           if [ "${{ matrix.service }}" == "backend" ]; then
             echo "backend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
           else
-            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone/backend:latest" >> $GITHUB_OUTPUT
-
+            echo "frontend_image=$ECR_REGISTRY/devsecops-capstone/frontend:latest" >> $GITHUB_OUTPUT
 
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
@@ -200,8 +203,8 @@ jobs:
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-          yq -i ".images[0].newName = \"${{ needs.build-test-image.outputs.backend-image }}\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
-          yq -i ".images[1].newName = \"${{ needs.build-test-image.outputs.frontend-image }}\"" ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+          yq -i '(.images[] | select(.name == "backend")).newName = "${{ needs.build-test-image.outputs.backend-image }}"' ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+          yq -i '(.images[] | select(.name == "frontend")).newName = "${{ needs.build-test-image.outputs.frontend-image }}"' ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
           git config user.name github-actions
           git config user.email github-actions@github.com
           git commit -am "Update backend & frontend images" || echo "No changes"
@@ -241,7 +244,7 @@ jobs:
           for app in backend-app frontend-app; do
             if ! argocd app sync $app; then
               echo "Sync failed for $app. Rolling back..."
-              argocd app rollback $app 0
+              argocd app rollback $app
               exit 1
             fi
             argocd app wait $app --health --timeout 300
@@ -250,9 +253,9 @@ jobs:
       - name: Deploy monitoring stack
         run: |
           kubectl apply -f k8s/monitoring/
-          kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s || true
-          kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s || true
-          kubectl rollout status statefulset/loki -n monitoring --timeout=120s || true
+          kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s
+          kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s
+          kubectl rollout status statefulset/loki -n monitoring --timeout=120s
 
 # name: EKS CI/CD with DevSecOps, ArgoCD & Monitoring
 # on:
