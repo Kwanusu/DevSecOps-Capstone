@@ -206,8 +206,8 @@ jobs:
       - name: Checkout manifests repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.MANIFESTS_REPO }}
-          token: ${{ env.MANIFESTS_REPO_PAT }}
+          repository: ${{ env.MANIFEST_REPO }}
+          token: ${{ env.MANIFEST_REPO_PAT }}
 
       - name: Update Kustomize images
         run: |
@@ -281,8 +281,8 @@ jobs:
 #   ARGOCD_ADMIN_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
 #   ARGOCD_DEV_PASSWORD: ${{ secrets.ARGOCD_DEV_PASSWORD }}
 #   ARGOCD_OPS_PASSWORD: ${{ secrets.ARGOCD_OPS_PASSWORD }}
-#   MANIFESTS_REPO: ${{ secrets.MANIFESTS_REPO }}
-#   MANIFESTS_REPO_PAT: ${{ secrets.MANIFESTS_REPO_PAT }}
+#   MANIFESTS_REPO: ${{ secrets.MANIFEST_REPO }}
+#   MANIFESTS_REPO_PAT: ${{ secrets.MANIFEST_REPO_PAT }}
 #   KUSTOMIZE_PATH: ${{ secrets.KUSTOMIZE_PATH }}
 
 # jobs:
