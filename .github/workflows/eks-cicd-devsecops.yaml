@@ -232,6 +232,12 @@ jobs:
           sudo chmod +x /usr/local/bin/argocd
           argocd version
 
+      - name: Trim ARGOCD_SERVER
+        run: |
+          CLEAN_ARGOCD_SERVER=$(echo "${{ secrets.ARGOCD_SERVER }}" | tr -d '\n' | tr -d '[:space:]')
+          echo "CLEAN_ARGOCD_SERVER=$CLEAN_ARGOCD_SERVER" >> $GITHUB_ENV
+
+
       - name: ArgoCD login
         run: |
           argocd login https://${{ secrets.ARGOCD_SERVER }} \
