@@ -6,15 +6,11 @@ resources:
   - ../../base/prometheus-ingress.yaml
 patchesStrategicMerge:
   - prometheus-tls-patch.yaml
-
 nameSuffix: -dev
-
 replicas:
   - name: capstone-app
     count: 1
-
 images:
   - name: app-image
     newName: ghcr.io/kwanusu/devsecops-capstone:latest
-
     newTag: dev
