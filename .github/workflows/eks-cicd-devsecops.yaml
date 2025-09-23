@@ -245,6 +245,14 @@ jobs:
             --password ${{ secrets.ARGOCD_ADMIN_PASSWORD }} \
             --insecure
 
+      - name: Sync apps
+        run: |
+          set -e
+          for app in backend-app frontend-app; do
+            argocd --server https://$CLEAN_ARGOCD_SERVER app sync $app
+            argocd --server https://$CLEAN_ARGOCD_SERVER app wait $app --health --timeout 300
+          done
+
       - name: Configure ArgoCD users (dev, ops)
         run: |
           kubectl -n argocd patch configmap argocd-cm \
@@ -263,14 +271,6 @@ jobs:
             }}"
 
           kubectl -n argocd rollout restart deploy argocd-server
-
-      - name: Sync apps
-        run: |
-          set -e
-          for app in backend-app frontend-app; do
-            argocd app sync $app
-            argocd app wait $app --health --timeout 300
-          done
 
       - name: Deploy monitoring stack
         run: |
