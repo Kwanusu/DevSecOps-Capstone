@@ -165,6 +165,11 @@ jobs:
           aws ecr describe-repositories --repository-names $REPO_NAME || \
           aws ecr create-repository --repository-name $REPO_NAME
 
+      - name: Sanitize ECR_REGISTRY
+        run: |
+          CLEAN_REGISTRY=$(echo "${ECR_REGISTRY}" | tr -d '\n' | tr -d '[:space:]')
+          echo "ECR_REGISTRY=$CLEAN_REGISTRY" >> $GITHUB_ENV
+          
       - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region $AWS_REGION \
