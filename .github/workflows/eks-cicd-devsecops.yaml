@@ -200,98 +200,100 @@ jobs:
   # ---------------------------
   # Deploy via ArgoCD & Kustomize
   # ---------------------------
-  deploy:
-    needs: build-test-image
-    runs-on: ubuntu-latest
-    steps:
+deploy:
+  needs: build-test-image
+  runs-on: ubuntu-latest
+  steps:
 
-      # Checkout manifests repo
-      - name: Checkout manifests repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.MANIFESTS_REPO }}
-          token: ${{ secrets.MANIFEST_REPO_PAT }}
+    # Checkout manifests repo
+    - name: Checkout manifests repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ secrets.MANIFESTS_REPO }}
+        token: ${{ secrets.MANIFEST_REPO_PAT }}
 
-      # Update Kustomize images
-      - name: Update Kustomize images
-        run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-          yq -i '(.images[] | select(.name == "backend")).newName = "${{ needs.build-test-image.outputs.backend-image }}"' ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
-          yq -i '(.images[] | select(.name == "frontend")).newName = "${{ needs.build-test-image.outputs.frontend-image }}"' ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git commit -am "Update backend & frontend images" || echo "No changes"
-          git push origin HEAD:main
+    # Update Kustomize images
+    - name: Update Kustomize images
+      run: |
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+        yq -i '(.images[] | select(.name == "backend")).newName = "${{ needs.build-test-image.outputs.backend-image }}"' ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+        yq -i '(.images[] | select(.name == "frontend")).newName = "${{ needs.build-test-image.outputs.frontend-image }}"' ${{ env.KUSTOMIZE_PATH }}/kustomization.yaml
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        git commit -am "Update backend & frontend images" || echo "No changes"
+        git push origin HEAD:main
 
-      # Install dependencies
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y apache2-utils curl
+    # Install dependencies
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y apache2-utils curl
 
-      # Install ArgoCD CLI
-      - name: Install ArgoCD CLI
-        run: |
-          sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-          sudo chmod +x /usr/local/bin/argocd
-          argocd version
+    # Install ArgoCD CLI
+    - name: Install ArgoCD CLI
+      run: |
+        sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+        sudo chmod +x /usr/local/bin/argocd
+        argocd version
 
-      # Debug trimmed ArgoCD server
-      - name: Debug ArgoCD server
-        run: |
-          SERVER=$(echo "${{ secrets.ARGOCD_SERVER }}" | tr -d '\n' | tr -d '[:space:]')
-          echo "Trimmed ArgoCD server: '$SERVER'"
+    # Debug trimmed ArgoCD server
+    - name: Debug ArgoCD server
+      run: |
+        SERVER=$(echo "${{ secrets.ARGOCD_SERVER }}" | tr -d '\n' | tr -d '[:space:]')
+        echo "Trimmed ArgoCD server: '$SERVER'"
 
-      # ArgoCD login
-      - name: ArgoCD login
-        run: |
-          # Clean up the server string
-          SERVER=$(echo "${{ secrets.ARGOCD_SERVER }}" | tr -d '\r' | tr -d '\n' | xargs)
-          # Ensure port is present
-          if [[ "$SERVER" != *:* ]]; then
-            SERVER="$SERVER:443"
-          fi
-          echo "Logging into ArgoCD at '$SERVER'"
-          argocd login "$SERVER" \
-            --username admin \
-            --password "${{ secrets.ARGOCD_ADMIN_PASSWORD }}" \
-            --insecure
+    # ArgoCD login
+    - name: ArgoCD login
+      run: |
+        SERVER=$(echo "${{ secrets.ARGOCD_SERVER }}" | tr -d '\r' | tr -d '\n' | xargs)
+        if [[ "$SERVER" != *:* ]]; then
+          SERVER="$SERVER:443"
+        fi
+        echo "Logging into ArgoCD at '$SERVER'"
+        argocd login "$SERVER" \
+          --username admin \
+          --password "${{ secrets.ARGOCD_ADMIN_PASSWORD }}" \
+          --insecure \
+          --grpc-web
 
+    # Apply ClusterIssuer for TLS
+    - name: Apply ClusterIssuer
+      run: |
+        kubectl apply -f manifests/argocd/cluster-issuer.yaml
 
+    # Configure ArgoCD users (dev, ops)
+    - name: Configure ArgoCD users (dev, ops)
+      run: |
+        kubectl -n argocd patch configmap argocd-cm \
+          --type merge \
+          -p '{
+            "data": {
+              "accounts.dev": "apiKey, login",
+              "accounts.ops": "apiKey, login"
+            }
+          }'
+        kubectl -n argocd patch secret argocd-secret \
+          --type merge \
+          -p "{\"stringData\": {
+            \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ secrets.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
+            \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ secrets.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
+          }}"
+        kubectl -n argocd rollout restart deploy argocd-server
 
-      # Configure ArgoCD users (dev, ops)
-      - name: Configure ArgoCD users (dev, ops)
-        run: |
-          kubectl -n argocd patch configmap argocd-cm \
-            --type merge \
-            -p '{
-              "data": {
-                "accounts.dev": "apiKey, login",
-                "accounts.ops": "apiKey, login"
-              }
-            }'
-          kubectl -n argocd patch secret argocd-secret \
-            --type merge \
-            -p "{\"stringData\": {
-              \"accounts.dev.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ secrets.ARGOCD_DEV_PASSWORD }}\" | tr -d ':\n')\",
-              \"accounts.ops.password\": \"$(htpasswd -bnBC 10 \"\" \"${{ secrets.ARGOCD_OPS_PASSWORD }}\" | tr -d ':\n')\"
-            }}"
-          kubectl -n argocd rollout restart deploy argocd-server
+    # Sync apps
+    - name: Sync apps
+      run: |
+        set -e
+        for app in backend-app frontend-app; do
+          argocd app sync $app
+          argocd app wait $app --health --timeout 300
+        done
 
-      # Sync apps
-      - name: Sync apps
-        run: |
-          set -e
-          for app in backend-app frontend-app; do
-            argocd app sync $app
-            argocd app wait $app --health --timeout 300
-          done
-
-      # Deploy monitoring stack
-      - name: Deploy monitoring stack
-        run: |
-          kubectl apply -f k8s/monitoring/
-          kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s
-          kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s
-          kubectl rollout status statefulset/loki -n monitoring --timeout=120s
+    # Deploy monitoring stack
+    - name: Deploy monitoring stack
+      run: |
+        kubectl apply -f k8s/monitoring/
+        kubectl rollout status deployment/prometheus-deployment -n monitoring --timeout=120s
+        kubectl rollout status deployment/grafana-deployment -n monitoring --timeout=120s
+        kubectl rollout status statefulset/loki -n monitoring --timeout=120s
