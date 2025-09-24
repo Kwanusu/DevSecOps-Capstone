@@ -247,11 +247,16 @@ jobs:
       - name: ArgoCD login
         run: |
           SERVER=$(echo "${{ secrets.ARGOCD_SERVER }}" | tr -d '\n' | tr -d '[:space:]')
+          # If no port specified, append :443
+          if [[ "$SERVER" != *:* ]]; then
+            SERVER="$SERVER:443"
+          fi
           echo "Logging into ArgoCD at $SERVER"
-          argocd login https://$SERVER \
+          argocd login $SERVER \
             --username admin \
             --password ${{ secrets.ARGOCD_ADMIN_PASSWORD }} \
             --insecure
+
 
       # Configure ArgoCD users (dev, ops)
       - name: Configure ArgoCD users (dev, ops)
