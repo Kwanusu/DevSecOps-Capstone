@@ -205,14 +205,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      # 1️⃣ Checkout manifests repo
+      # Checkout manifests repo
       - name: Checkout manifests repo
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MANIFESTS_REPO }}
           token: ${{ secrets.MANIFEST_REPO_PAT }}
 
-      # 2️⃣ Update Kustomize images
+      # Update Kustomize images
       - name: Update Kustomize images
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
@@ -224,20 +224,20 @@ jobs:
           git commit -am "Update backend & frontend images" || echo "No changes"
           git push origin HEAD:main
 
-      # 3️⃣ Install dependencies
+      # Install dependencies
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y apache2-utils curl openssl
 
-      # 4️⃣ Install ArgoCD CLI
+      # Install ArgoCD CLI
       - name: Install ArgoCD CLI
         run: |
           sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           sudo chmod +x /usr/local/bin/argocd
           argocd version
 
-      # 5️⃣ Generate self-signed TLS cert
+      # Generate self-signed TLS cert
       - name: Generate self-signed TLS cert
         run: |
           openssl req -x509 -nodes -days 365 \
@@ -246,7 +246,7 @@ jobs:
             -out argocd-selfsigned.crt \
             -subj "/CN=kwanusutaskapp.duckdns.org"
 
-      # 6️⃣ Create Kubernetes TLS secret
+      # Create Kubernetes TLS secret
       - name: Create TLS secret
         run: |
           kubectl create secret tls argocd-server-tls \
@@ -254,7 +254,7 @@ jobs:
             --cert argocd-selfsigned.crt \
             -n argocd --dry-run=client -o yaml | kubectl apply -f -
 
-      # 7️⃣ Patch ArgoCD server deployment to use TLS cert
+      # Patch ArgoCD server deployment to use TLS cert
       - name: Patch ArgoCD server deployment
         run: |
           kubectl -n argocd patch deployment argocd-server \
@@ -282,12 +282,12 @@ jobs:
               }
             }'
 
-      # 8️⃣ Restart ArgoCD server
+      # Restart ArgoCD server
       - name: Restart ArgoCD server
         run: |
           kubectl -n argocd rollout restart deploy argocd-server
 
-      # 9️⃣ Update DuckDNS dynamically
+      # Update DuckDNS dynamically
       - name: Update DuckDNS IP
         env:
           DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
@@ -298,7 +298,13 @@ jobs:
           curl -s "https://www.duckdns.org/update?domains=kwanusutaskapp&token=$DUCKDNS_TOKEN&ip=$ELB_IP"
           echo "DuckDNS updated to $ELB_IP"
 
-      # 🔟 ArgoCD login (secure, no --insecure)
+      # Trust self-signed cert in runner
+      - name: Trust ArgoCD self-signed cert
+        run: |
+          sudo cp argocd-selfsigned.crt /usr/local/share/ca-certificates/argocd.crt
+          sudo update-ca-certificates
+
+      # ArgoCD login securely
       - name: ArgoCD login
         env:
           ARGOCD_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
@@ -310,7 +316,7 @@ jobs:
             --password "$ARGOCD_PASSWORD" \
             --grpc-web
 
-      # 1️⃣1️⃣ Configure ArgoCD users (dev, ops)
+      # Configure ArgoCD users (dev, ops)
       - name: Configure ArgoCD users (dev, ops)
         env:
           DEV_PASSWORD: ${{ secrets.ARGOCD_DEV_PASSWORD }}
@@ -332,7 +338,7 @@ jobs:
             }}"
           kubectl -n argocd rollout restart deploy argocd-server
 
-      # 1️⃣2️⃣ Sync apps
+      # Sync apps
       - name: Sync apps
         run: |
           set -e
@@ -341,7 +347,7 @@ jobs:
             argocd app wait $app --health --timeout 300
           done
 
-      # 1️⃣3️⃣ Deploy monitoring stack
+      # Deploy monitoring stack
       - name: Deploy monitoring stack
         run: |
           kubectl apply -f k8s/monitoring/
