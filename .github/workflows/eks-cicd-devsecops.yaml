@@ -237,14 +237,32 @@ jobs:
           sudo chmod +x /usr/local/bin/argocd
           argocd version
 
-      # Generate self-signed TLS cert
+      # Generate self-signed TLS cert with SAN
       - name: Generate self-signed TLS cert
         run: |
+          cat > openssl-san.cnf <<EOF
+          [req]
+          default_bits       = 2048
+          distinguished_name = req_distinguished_name
+          x509_extensions    = v3_req
+          prompt             = no
+
+          [req_distinguished_name]
+          CN = kwanusutaskapp.duckdns.org
+
+          [v3_req]
+          subjectAltName = @alt_names
+
+          [alt_names]
+          DNS.1 = kwanusutaskapp.duckdns.org
+          EOF
+
           openssl req -x509 -nodes -days 365 \
             -newkey rsa:2048 \
             -keyout argocd-selfsigned.key \
             -out argocd-selfsigned.crt \
-            -subj "/CN=kwanusutaskapp.duckdns.org"
+            -config openssl-san.cnf
+
 
       # Create Kubernetes TLS secret
       - name: Create TLS secret
