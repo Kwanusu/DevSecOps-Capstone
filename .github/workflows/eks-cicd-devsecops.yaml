@@ -332,7 +332,8 @@ jobs:
           argocd login "$SERVER" \
             --username admin \
             --password "$ARGOCD_PASSWORD" \
-            --grpc-web
+            --grpc-web \
+            --insecure
 
       # Configure ArgoCD users (dev, ops)
       - name: Configure ArgoCD users (dev, ops)
