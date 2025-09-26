@@ -326,14 +326,14 @@ jobs:
       - name: ArgoCD login
         env:
           ARGOCD_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
+          ARGOCD_OPTS: "--insecure --grpc-web"
         run: |
           SERVER="kwanusutaskapp.duckdns.org:443"
           echo "Logging into ArgoCD at $SERVER"
           argocd login "$SERVER" \
             --username admin \
-            --password "$ARGOCD_PASSWORD" \
-            --grpc-web \
-            --insecure
+            --password "$ARGOCD_PASSWORD"
+
 
       # Configure ArgoCD users (dev, ops)
       - name: Configure ArgoCD users (dev, ops)
