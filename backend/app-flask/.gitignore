@@ -106,6 +106,8 @@ MANIFEST
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+argocd-selfsigned.crt
+argocd-selfsigned.key
 
 # Unit test / coverage reports
 htmlcov/

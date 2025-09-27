@@ -263,7 +263,6 @@ jobs:
             -out argocd-selfsigned.crt \
             -config openssl-san.cnf
 
-
       # Create Kubernetes TLS secret
       - name: Create TLS secret
         run: |
@@ -322,7 +321,7 @@ jobs:
           sudo cp argocd-selfsigned.crt /usr/local/share/ca-certificates/argocd.crt
           sudo update-ca-certificates
 
-      # ArgoCD login securely (self-signed)
+      # ArgoCD login securely
       - name: ArgoCD login
         env:
           ARGOCD_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
@@ -334,15 +333,6 @@ jobs:
             --password "$ARGOCD_PASSWORD" \
             --insecure \
             --grpc-web
-
-      # Sync apps (pass flags to each command)
-      - name: Sync apps
-        run: |
-          set -e
-          for app in backend-app frontend-app; do
-            argocd app sync $app --insecure --grpc-web
-            argocd app wait $app --health --timeout 300 --insecure --grpc-web
-          done
 
       # Configure ArgoCD users (dev, ops)
       - name: Configure ArgoCD users (dev, ops)
@@ -371,8 +361,8 @@ jobs:
         run: |
           set -e
           for app in backend-app frontend-app; do
-            argocd app sync $app
-            argocd app wait $app --health --timeout 300
+            argocd app sync $app --insecure --grpc-web
+            argocd app wait $app --health --timeout 300 --insecure --grpc-web
           done
 
       # Deploy monitoring stack

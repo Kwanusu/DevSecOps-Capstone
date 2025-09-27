@@ -4,6 +4,8 @@
 .terraformrc
 terraform.rc
 .terraform.lock.hcl
+.crt
+.key
 
 # Terraform state & sensitive files
 *.tfstate
