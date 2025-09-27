@@ -230,12 +230,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y apache2-utils curl openssl
 
+      # Configure kubectl to talk to EKS
+      - name: Configure kubectl
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name devsecops-capstone-cluster
+
       # Install ArgoCD CLI
       - name: Install ArgoCD CLI
         run: |
           sudo curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           sudo chmod +x /usr/local/bin/argocd
-          # Only show client version (avoid TLS failure)
           argocd version --client
 
       # Generate self-signed TLS cert with SAN
@@ -305,16 +313,33 @@ jobs:
         run: |
           kubectl -n argocd rollout restart deploy argocd-server
 
-      # Update DuckDNS dynamically
+      # Update DuckDNS dynamically with retry
       - name: Update DuckDNS IP
         env:
           DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
         run: |
-          ELB_DNS="aa943b438d5ff49f8b751f84ffa41fcd-1994030825.eu-north-1.elb.amazonaws.com"
-          ELB_IP=$(nslookup $ELB_DNS | awk '/Address: / { print $2 }' | tail -n1)
-          echo "ELB IP: $ELB_IP"
-          curl -s "https://www.duckdns.org/update?domains=kwanusutaskapp&token=$DUCKDNS_TOKEN&ip=$ELB_IP"
-          echo "DuckDNS updated to $ELB_IP"
+          FRONTEND_NAMESPACE=default       # change if your frontend is in a different namespace
+          FRONTEND_SERVICE=frontend-service # replace with your actual frontend service name
+
+          for i in {1..5}; do
+            ELB_DNS=$(kubectl -n $FRONTEND_NAMESPACE get svc $FRONTEND_SERVICE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            if [ -n "$ELB_DNS" ]; then break; fi
+            echo "ELB hostname not ready, retrying in 15s..."
+            sleep 15
+          done
+
+          echo "Frontend service ELB DNS: $ELB_DNS"
+
+          for i in {1..5}; do
+            FRONTEND_IP=$(nslookup $ELB_DNS | awk '/^Address: / { print $2 }' | tail -n1)
+            if [ -n "$FRONTEND_IP" ]; then break; fi
+            echo "IP not resolved yet, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Resolved Frontend IP: $FRONTEND_IP"
+          curl -s "https://www.duckdns.org/update?domains=kwanusutaskapp&token=$DUCKDNS_TOKEN&ip=$FRONTEND_IP"
+          echo "DuckDNS updated to $FRONTEND_IP"
 
       # Trust self-signed cert in runner
       - name: Trust ArgoCD self-signed cert
@@ -322,17 +347,35 @@ jobs:
           sudo cp argocd-selfsigned.crt /usr/local/share/ca-certificates/argocd.crt
           sudo update-ca-certificates
 
-      # ArgoCD login securely
+      # # ArgoCD login securely
+      # - name: ArgoCD login
+      #   env:
+      #     ARGOCD_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
+      #   run: |
+      #     SERVER="kwanusutaskapp.duckdns.org:443"
+      #     echo "Logging into ArgoCD at $SERVER"
+      #     argocd login "$SERVER" \
+      #       --username admin \
+      #       --password "$ARGOCD_PASSWORD" \
+      #       --insecure \
+      #       --grpc-web
+
+      # ArgoCD login securely using self-signed cert
       - name: ArgoCD login
         env:
           ARGOCD_PASSWORD: ${{ secrets.ARGOCD_ADMIN_PASSWORD }}
         run: |
           SERVER="kwanusutaskapp.duckdns.org:443"
-          echo "Logging into ArgoCD at $SERVER"
+
+          # Add ArgoCD self-signed cert to a temporary CA file for CLI
+          mkdir -p ~/.argocd
+          cp argocd-selfsigned.crt ~/.argocd/ca.crt
+
+          echo "Logging into ArgoCD at $SERVER using self-signed certificate"
           argocd login "$SERVER" \
             --username admin \
             --password "$ARGOCD_PASSWORD" \
-            --insecure \
+            --certificate-authority ~/.argocd/ca.crt \
             --grpc-web
 
       # Configure ArgoCD users (dev, ops)
